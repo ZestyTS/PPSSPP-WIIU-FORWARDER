@@ -466,6 +466,13 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	// Packed assets are included in app
 	VFSRegister("", new DirectoryAssetReader(external_dir));
 #endif
+#if defined(__wiiu__)
+	std::string wiiuAssetRoot = external_dir && strlen(external_dir) ? external_dir : "sd:/ppsspp/";
+	if (!wiiuAssetRoot.empty() && wiiuAssetRoot[wiiuAssetRoot.size() - 1] != '/')
+		wiiuAssetRoot += "/";
+	VFSRegister("", new DirectoryAssetReader((wiiuAssetRoot + "assets/").c_str()));
+	VFSRegister("", new DirectoryAssetReader(wiiuAssetRoot.c_str()));
+#endif
 #if !defined(MOBILE_DEVICE) && !defined(_WIN32) && !PPSSPP_PLATFORM(SWITCH)
 	VFSRegister("", new DirectoryAssetReader((File::GetExeDirectory() + "assets/").c_str()));
 	VFSRegister("", new DirectoryAssetReader((File::GetExeDirectory()).c_str()));
@@ -513,8 +520,13 @@ void NativeInit(int argc, const char *argv[], const char *savegame_dir, const ch
 	g_Config.memStickDirectory = g_Config.internalDataDirectory + "config/ppsspp/";
 	g_Config.flash0Directory = g_Config.internalDataDirectory + "assets/flash0/";
 #elif defined(__wiiu__)
-	g_Config.memStickDirectory = "sd:/ppsspp/";
-	g_Config.flash0Directory = "sd:/ppsspp/assets/flash0/";
+	std::string wiiuSaveRoot = savegame_dir && strlen(savegame_dir) ? savegame_dir : "sd:/ppsspp/";
+	if (!wiiuSaveRoot.empty() && wiiuSaveRoot[wiiuSaveRoot.size() - 1] != '/')
+		wiiuSaveRoot += "/";
+	if (!wiiuAssetRoot.empty() && wiiuAssetRoot[wiiuAssetRoot.size() - 1] != '/')
+		wiiuAssetRoot += "/";
+	g_Config.memStickDirectory = wiiuSaveRoot;
+	g_Config.flash0Directory = wiiuAssetRoot + "assets/flash0/";
 #elif !defined(_WIN32)
 	std::string config;
 	if (getenv("XDG_CONFIG_HOME") != NULL)

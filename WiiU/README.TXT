@@ -30,6 +30,11 @@ the installed title content folder. Direct installed-content boot is attempted
 first. Set copy_to_sd=true only when testing a runtime that cannot read the
 installed storage path directly.
 
+Runtime assets are loaded from installed title content/assets when present,
+with sd:/ppsspp/assets as a fallback. Saves, cache files, and autoboot logs
+still use sd:/ppsspp because installed title content is not treated as a
+writable user-data location.
+
 Runtime diagnostics are written to:
 
 sd:/ppsspp/autoboot.log

@@ -158,8 +158,9 @@ WiiUHost::WiiUHost() {
       memcpy(&usbPath[7], "Nand", 4);
    	}*/
 
-	//chdir(usbPath);
-	chdir("sd:/ppsspp/"); // probably useless...
+	// Asset paths are registered by NativeInit(). Do not force the working
+	// directory to sd:/ppsspp here; installable packages can carry assets in
+	// their own content directory.
 }
 
 WiiUHost::~WiiUHost() {

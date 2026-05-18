@@ -106,6 +106,21 @@ static std::string BuildInstalledContentPath(const char *volume, const char *tit
 		fileName;
 }
 
+static std::string BuildInstalledContentRoot(const char *volume, const char *titleIDHex) {
+	return std::string(volume) +
+		":/usr/title/" +
+		std::string(titleIDHex, 8) +
+		"/" +
+		std::string(titleIDHex + 8, 8) +
+		"/content/";
+}
+
+static std::string EnsureTrailingSlash(const std::string &value) {
+	if (value.empty() || value[value.size() - 1] == '/')
+		return value;
+	return value + "/";
+}
+
 static std::string ResolveConfiguredPath(const std::string &value, const std::string &configPath) {
 	if (value.find(":/") != std::string::npos)
 		return value;
@@ -188,6 +203,27 @@ static std::string FindInstalledGamePath(const char *titleIDHex, std::ofstream &
 	}
 
 	return "";
+}
+
+static std::string FindRuntimeRoot(const char *titleIDHex, std::ofstream &log) {
+	const char *volumes[] = { "storage_usb", "storage_Nand" };
+
+	for (const char *volume : volumes) {
+		const std::string root = BuildInstalledContentRoot(volume, titleIDHex);
+		const std::string ppgeAtlas = root + "assets/ppge_atlas.zim";
+		const std::string flash0Font = root + "assets/flash0/font/ltn0.pgf";
+		if (log.is_open())
+			log << "Checking installed PPSSPP runtime root: " << root << "\n";
+		if (file_exists(ppgeAtlas) || file_exists(flash0Font)) {
+			if (log.is_open())
+				log << "Using installed content runtime root: " << root << "\n";
+			return root;
+		}
+	}
+
+	if (log.is_open())
+		log << "Installed content assets were not found; falling back to sd:/ppsspp/.\n";
+	return "sd:/ppsspp/";
 }
 
 static std::string BuildSdCachePathForSource(const std::string &sourcePath) {
@@ -277,6 +313,9 @@ int main(int argc, char **argv) {
 	bytes2hex(tID, titleIDHex);
 	if (fw.is_open())
 		fw << "Title ID: " << titleIDHex << "\n";
+	const std::string runtimeRoot = EnsureTrailingSlash(FindRuntimeRoot(titleIDHex, fw));
+	if (fw.is_open())
+		fw << "Runtime root: " << runtimeRoot << "\n";
 
 	bool copyToSd = false;
 	std::string gamePath;
@@ -309,7 +348,7 @@ int main(int argc, char **argv) {
 	}
 
 	const char *argv_[3] = {
-		"sd:/ppsspp/PPSSPP.rpx",
+		"PPSSPP.rpx",
 		nullptr,
 //		"-d",
 //		"-v",
@@ -324,7 +363,7 @@ int main(int argc, char **argv) {
 	const int nativeArgc = gamePath.empty() ? 1 : 2;
 
 	//arg size, arg, savegamedir, external dir, cache dir
-	NativeInit(nativeArgc, argv_, "sd:/ppsspp/", "sd:/ppsspp/", nullptr);
+	NativeInit(nativeArgc, argv_, "sd:/ppsspp/", runtimeRoot.c_str(), "sd:/ppsspp/");
 #if 0
 	UpdateScreenScale(854,480);
 #else
