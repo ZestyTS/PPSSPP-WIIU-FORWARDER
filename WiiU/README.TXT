@@ -14,26 +14,46 @@ the run.sh script can be used to both send the compiled rpx to the HBL and liste
 
 ### Autoboot behavior
 
-The Wii U entrypoint checks for an optional autoboot config at:
+The Wii U entrypoint checks for an optional autoboot config in this order:
 
+installed title content/autoboot.txt
 sd:/wiiu/apps/ppsspp/autoboot.txt
 sd:/ppsspp/autoboot.txt
-installed title content/autoboot.txt
 
 The config can contain either a plain path or key/value lines:
 
 iso=sd:/ppsspp/games/My Game.iso
 copy_to_sd=false
+performance_profile=fast
 
 If no config is present, it tries to boot game.iso, game.cso, or game.pbp from
 the installed title content folder. Direct installed-content boot is attempted
 first. Set copy_to_sd=true only when testing a runtime that cannot read the
 installed storage path directly.
 
-Runtime assets are loaded from installed title content/assets when present,
-with sd:/ppsspp/assets as a fallback. Saves, cache files, and autoboot logs
-still use sd:/ppsspp because installed title content is not treated as a
-writable user-data location.
+Packaged installable config is intentionally checked before SD config so a
+stale sd:/ppsspp/autoboot.txt cannot redirect an installed WUP title to a
+different game. Empty or comment-only config files are ignored and fallback
+detection continues.
+
+The optional performance_profile value accepts:
+
+compatibility
+balanced
+fast
+max_speed
+
+fast is the Wii U baseline used by UInjectForge. It keeps 1x rendering and
+enables lighter graphics settings plus auto frameskip. balanced keeps safer
+speed settings without forced frameskip. compatibility avoids the most aggressive
+speed hacks. max_speed disables more visual work and sound for difficult games;
+use it only for performance testing.
+
+Runtime assets are loaded from installed title content/assets when present
+(`ppge_atlas.zim`, `ui_atlas.zim`, `langregion.ini`, or flash0 font assets
+are treated as asset-root markers), with sd:/ppsspp/assets as a fallback.
+Saves, cache files, and autoboot logs still use sd:/ppsspp because installed
+title content is not treated as a writable user-data location.
 
 Runtime diagnostics are written to:
 

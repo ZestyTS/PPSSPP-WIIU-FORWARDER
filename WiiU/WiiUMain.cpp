@@ -22,6 +22,8 @@
 #include "Common/System/NativeApp.h"
 #include "Common/System/Display.h"
 #include "Core/Core.h"
+#include "Core/Config.h"
+#include "Core/ConfigValues.h"
 #include "Common/Log.h"
 
 #include "Common/GraphicsContext.h"
@@ -96,6 +98,97 @@ static bool ParseBool(const std::string &value) {
 		EqualsIgnoreCase(value, "on");
 }
 
+static std::string NormalizePerformanceProfile(const std::string &value) {
+	if (EqualsIgnoreCase(value, "compat") ||
+		EqualsIgnoreCase(value, "compatibility") ||
+		EqualsIgnoreCase(value, "safe"))
+		return "compatibility";
+
+	if (EqualsIgnoreCase(value, "balanced") ||
+		EqualsIgnoreCase(value, "default"))
+		return "balanced";
+
+	if (EqualsIgnoreCase(value, "fast") ||
+		EqualsIgnoreCase(value, "speed"))
+		return "fast";
+
+	if (EqualsIgnoreCase(value, "max") ||
+		EqualsIgnoreCase(value, "maxspeed") ||
+		EqualsIgnoreCase(value, "max_speed") ||
+		EqualsIgnoreCase(value, "maximum"))
+		return "max_speed";
+
+	return "fast";
+}
+
+static void ApplyWiiUPerformanceProfile(const std::string &profile, std::ofstream &log) {
+	const std::string normalized = NormalizePerformanceProfile(profile);
+	if (log.is_open())
+		log << "Applying performance profile: " << normalized << "\n";
+
+	g_Config.iPSPModel = PSP_MODEL_SLIM;
+	g_Config.iGPUBackend = (int)GPUBackend::GX2;
+	g_Config.iCpuCore = (int)CPUCore::JIT;
+	g_Config.bFastMemory = true;
+	g_Config.bFuncReplacements = true;
+	g_Config.bSeparateIOThread = true;
+	g_Config.iIOTimingMethod = IOTIMING_FAST;
+	g_Config.bEnableSound = true;
+	g_Config.bPauseExitsEmulator = false;
+	g_Config.bPauseMenuExitsEmulator = false;
+	g_Config.bSoftwareRendering = false;
+	g_Config.bHardwareTransform = true;
+	g_Config.bSoftwareSkinning = false;
+	g_Config.bVertexCache = true;
+	g_Config.bVertexDecoderJit = false;
+	g_Config.iInternalResolution = 1;
+	g_Config.iTexFiltering = 1;
+	g_Config.iBufFilter = SCALE_NEAREST;
+	g_Config.iAnisotropyLevel = 0;
+	g_Config.iTexScalingLevel = 1;
+	g_Config.bTexDeposterize = false;
+	g_Config.bTexHardwareScaling = false;
+	g_Config.bVSync = false;
+	g_Config.bReplaceTextures = false;
+	g_Config.bSaveNewTextures = false;
+	g_Config.iBloomHack = 0;
+	g_Config.bHardwareTessellation = false;
+	g_Config.bRenderDuplicateFrames = false;
+	g_Config.iInflightFrames = 2;
+	g_Config.bClearFramebuffersOnFirstUseHack = true;
+
+	if (normalized == "compatibility") {
+		g_Config.iFrameSkip = 0;
+		g_Config.bAutoFrameSkip = false;
+		g_Config.iSplineBezierQuality = 2;
+		g_Config.bBlockTransferGPU = true;
+		g_Config.bDisableSlowFramebufEffects = false;
+		g_Config.bFragmentTestCache = true;
+	} else if (normalized == "balanced") {
+		g_Config.iFrameSkip = 0;
+		g_Config.bAutoFrameSkip = false;
+		g_Config.iSplineBezierQuality = 1;
+		g_Config.bBlockTransferGPU = true;
+		g_Config.bDisableSlowFramebufEffects = false;
+		g_Config.bFragmentTestCache = true;
+	} else if (normalized == "max_speed") {
+		g_Config.iFrameSkip = 2;
+		g_Config.bAutoFrameSkip = true;
+		g_Config.iSplineBezierQuality = 0;
+		g_Config.bBlockTransferGPU = false;
+		g_Config.bDisableSlowFramebufEffects = true;
+		g_Config.bFragmentTestCache = false;
+		g_Config.bEnableSound = false;
+	} else {
+		g_Config.iFrameSkip = 1;
+		g_Config.bAutoFrameSkip = true;
+		g_Config.iSplineBezierQuality = 0;
+		g_Config.bBlockTransferGPU = true;
+		g_Config.bDisableSlowFramebufEffects = true;
+		g_Config.bFragmentTestCache = true;
+	}
+}
+
 static std::string BuildInstalledContentPath(const char *volume, const char *titleIDHex, const char *fileName) {
 	return std::string(volume) +
 		":/usr/title/" +
@@ -132,7 +225,7 @@ static std::string ResolveConfiguredPath(const std::string &value, const std::st
 	return "sd:/ppsspp/" + value;
 }
 
-static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, std::ofstream &log) {
+static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, std::ofstream &log) {
 	std::ifstream file(path);
 	if (!file.is_open())
 		return false;
@@ -140,6 +233,7 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 	if (log.is_open())
 		log << "Using autoboot config: " << path << "\n";
 
+	bool handled = false;
 	std::string line;
 	while (std::getline(file, line)) {
 		const size_t comment = line.find('#');
@@ -152,6 +246,7 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 		const size_t equals = line.find('=');
 		if (equals == std::string::npos) {
 			*gamePath = ResolveConfiguredPath(line, path);
+			handled = true;
 			continue;
 		}
 
@@ -162,26 +257,37 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 			EqualsIgnoreCase(key, "path") ||
 			EqualsIgnoreCase(key, "rom")) {
 			*gamePath = ResolveConfiguredPath(value, path);
+			handled = true;
 		} else if (EqualsIgnoreCase(key, "copy_to_sd") ||
 			EqualsIgnoreCase(key, "copyToSd") ||
 			EqualsIgnoreCase(key, "copy")) {
 			*copyToSd = ParseBool(value);
+			handled = true;
+		} else if (EqualsIgnoreCase(key, "performance_profile") ||
+			EqualsIgnoreCase(key, "performanceProfile") ||
+			EqualsIgnoreCase(key, "profile") ||
+			EqualsIgnoreCase(key, "speed_profile")) {
+			*performanceProfile = NormalizePerformanceProfile(value);
+			handled = true;
 		}
 	}
 
-	return true;
+	if (!handled && log.is_open())
+		log << "Autoboot config had no recognized settings; continuing fallback search.\n";
+
+	return handled;
 }
 
-static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::ofstream &log) {
+static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, std::ofstream &log) {
 	const std::string configPaths[] = {
-		"sd:/wiiu/apps/ppsspp/autoboot.txt",
-		"sd:/ppsspp/autoboot.txt",
 		BuildInstalledContentPath("storage_usb", titleIDHex, "autoboot.txt"),
-		BuildInstalledContentPath("storage_Nand", titleIDHex, "autoboot.txt")
+		BuildInstalledContentPath("storage_Nand", titleIDHex, "autoboot.txt"),
+		"sd:/wiiu/apps/ppsspp/autoboot.txt",
+		"sd:/ppsspp/autoboot.txt"
 	};
 
 	for (const std::string &path : configPaths) {
-		if (ReadAutobootConfig(path, gamePath, copyToSd, log))
+		if (ReadAutobootConfig(path, gamePath, copyToSd, performanceProfile, log))
 			return true;
 	}
 
@@ -211,10 +317,12 @@ static std::string FindRuntimeRoot(const char *titleIDHex, std::ofstream &log) {
 	for (const char *volume : volumes) {
 		const std::string root = BuildInstalledContentRoot(volume, titleIDHex);
 		const std::string ppgeAtlas = root + "assets/ppge_atlas.zim";
+		const std::string uiAtlas = root + "assets/ui_atlas.zim";
+		const std::string langRegion = root + "assets/langregion.ini";
 		const std::string flash0Font = root + "assets/flash0/font/ltn0.pgf";
 		if (log.is_open())
 			log << "Checking installed PPSSPP runtime root: " << root << "\n";
-		if (file_exists(ppgeAtlas) || file_exists(flash0Font)) {
+		if (file_exists(ppgeAtlas) || file_exists(uiAtlas) || file_exists(langRegion) || file_exists(flash0Font)) {
 			if (log.is_open())
 				log << "Using installed content runtime root: " << root << "\n";
 			return root;
@@ -318,8 +426,9 @@ int main(int argc, char **argv) {
 		fw << "Runtime root: " << runtimeRoot << "\n";
 
 	bool copyToSd = false;
+	std::string performanceProfile = "fast";
 	std::string gamePath;
-	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, fw);
+	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, &performanceProfile, fw);
 
 	if (!gamePath.empty() && !file_exists(gamePath)) {
 		if (fw.is_open())
@@ -383,20 +492,7 @@ int main(int argc, char **argv) {
 	printf("Pixels: %i x %i\n", pixel_xres, pixel_yres);
 	printf("Virtual pixels: %i x %i\n", dp_xres, dp_yres);
 
-	g_Config.iPSPModel = PSP_MODEL_SLIM;
-	g_Config.iGPUBackend = (int)GPUBackend::GX2;
-	g_Config.bEnableSound = true;
-	g_Config.bPauseExitsEmulator = false;
-	g_Config.bPauseMenuExitsEmulator = false;
-//	g_Config.iCpuCore = (int)CPUCore::JIT;
-	g_Config.bVertexDecoderJit = false;
-	g_Config.bSoftwareRendering = false;
-//	g_Config.iFpsLimit = 0;
-	g_Config.bHardwareTransform = true;
-	g_Config.bSoftwareSkinning = false;
-	g_Config.bVertexCache = true;
-//	PSP_CoreParameter().gpuCore = GPUCORE_NULL;
-//	g_Config.bTextureBackoffCache = true;
+	ApplyWiiUPerformanceProfile(performanceProfile, fw);
 	std::string error_string;
 	GraphicsContext *ctx;
 	host->InitGraphics(&error_string, &ctx);
