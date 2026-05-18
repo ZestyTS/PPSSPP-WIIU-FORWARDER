@@ -1,9 +1,10 @@
 #include <string>
 #include <cstring>
 #include <cstdlib>
+#include <cstdio>
+#include <cstdint>
 #include <unistd.h>
 #include <fstream>
-#include <filesystem>
 
 #include <wiiu/os/systeminfo.h>
 #include <wiiu/os/thread.h>
@@ -28,7 +29,7 @@
 
 
 const char *PROGRAM_NAME = "PPSSPP";
-const char *PROGRAM_VERSION = "NICO WAS HERE";
+const char *PROGRAM_VERSION = "Wii U Autoboot";
 
 static int g_QuitRequested;
 void System_SendMessage(const char *command, const char *parameter) {
@@ -55,6 +56,198 @@ void bytes2hex(uint64_t input, char* output) {
     for(size_t i = 0, o = 15; i != 16; i++, o--) {
         output[o] = table[(input >> (i * 4)) & 0xF];
     }
+	output[16] = '\0';
+}
+
+static std::string Trim(const std::string &value) {
+	const size_t start = value.find_first_not_of(" \t\r\n");
+	if (start == std::string::npos)
+		return "";
+	const size_t end = value.find_last_not_of(" \t\r\n");
+	return value.substr(start, end - start + 1);
+}
+
+static bool EqualsIgnoreCase(const std::string &left, const std::string &right) {
+	if (left.size() != right.size())
+		return false;
+	for (size_t i = 0; i < left.size(); i++) {
+		char a = left[i];
+		char b = right[i];
+		if (a >= 'A' && a <= 'Z')
+			a = (char)(a - 'A' + 'a');
+		if (b >= 'A' && b <= 'Z')
+			b = (char)(b - 'A' + 'a');
+		if (a != b)
+			return false;
+	}
+	return true;
+}
+
+static bool EndsWithIgnoreCase(const std::string &value, const std::string &suffix) {
+	if (suffix.size() > value.size())
+		return false;
+	return EqualsIgnoreCase(value.substr(value.size() - suffix.size()), suffix);
+}
+
+static bool ParseBool(const std::string &value) {
+	return EqualsIgnoreCase(value, "1") ||
+		EqualsIgnoreCase(value, "true") ||
+		EqualsIgnoreCase(value, "yes") ||
+		EqualsIgnoreCase(value, "on");
+}
+
+static std::string BuildInstalledContentPath(const char *volume, const char *titleIDHex, const char *fileName) {
+	return std::string(volume) +
+		":/usr/title/" +
+		std::string(titleIDHex, 8) +
+		"/" +
+		std::string(titleIDHex + 8, 8) +
+		"/content/" +
+		fileName;
+}
+
+static std::string ResolveConfiguredPath(const std::string &value, const std::string &configPath) {
+	if (value.find(":/") != std::string::npos)
+		return value;
+
+	const size_t slash = configPath.find_last_of('/');
+	if (slash != std::string::npos)
+		return configPath.substr(0, slash + 1) + value;
+
+	return "sd:/ppsspp/" + value;
+}
+
+static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, std::ofstream &log) {
+	std::ifstream file(path);
+	if (!file.is_open())
+		return false;
+
+	if (log.is_open())
+		log << "Using autoboot config: " << path << "\n";
+
+	std::string line;
+	while (std::getline(file, line)) {
+		const size_t comment = line.find('#');
+		if (comment != std::string::npos)
+			line = line.substr(0, comment);
+		line = Trim(line);
+		if (line.empty())
+			continue;
+
+		const size_t equals = line.find('=');
+		if (equals == std::string::npos) {
+			*gamePath = ResolveConfiguredPath(line, path);
+			continue;
+		}
+
+		const std::string key = Trim(line.substr(0, equals));
+		const std::string value = Trim(line.substr(equals + 1));
+		if (EqualsIgnoreCase(key, "iso") ||
+			EqualsIgnoreCase(key, "game") ||
+			EqualsIgnoreCase(key, "path") ||
+			EqualsIgnoreCase(key, "rom")) {
+			*gamePath = ResolveConfiguredPath(value, path);
+		} else if (EqualsIgnoreCase(key, "copy_to_sd") ||
+			EqualsIgnoreCase(key, "copyToSd") ||
+			EqualsIgnoreCase(key, "copy")) {
+			*copyToSd = ParseBool(value);
+		}
+	}
+
+	return true;
+}
+
+static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::ofstream &log) {
+	const std::string configPaths[] = {
+		"sd:/wiiu/apps/ppsspp/autoboot.txt",
+		"sd:/ppsspp/autoboot.txt",
+		BuildInstalledContentPath("storage_usb", titleIDHex, "autoboot.txt"),
+		BuildInstalledContentPath("storage_Nand", titleIDHex, "autoboot.txt")
+	};
+
+	for (const std::string &path : configPaths) {
+		if (ReadAutobootConfig(path, gamePath, copyToSd, log))
+			return true;
+	}
+
+	return false;
+}
+
+static std::string FindInstalledGamePath(const char *titleIDHex, std::ofstream &log) {
+	const char *files[] = { "game.iso", "game.cso", "game.pbp" };
+	const char *volumes[] = { "storage_usb", "storage_Nand" };
+
+	for (const char *volume : volumes) {
+		for (const char *fileName : files) {
+			const std::string path = BuildInstalledContentPath(volume, titleIDHex, fileName);
+			if (log.is_open())
+				log << "Checking installed content path: " << path << "\n";
+			if (file_exists(path))
+				return path;
+		}
+	}
+
+	return "";
+}
+
+static std::string BuildSdCachePathForSource(const std::string &sourcePath) {
+	if (EndsWithIgnoreCase(sourcePath, ".cso"))
+		return "sd:/ppsspp/game.cso";
+	if (EndsWithIgnoreCase(sourcePath, ".pbp"))
+		return "sd:/ppsspp/game.pbp";
+	return "sd:/ppsspp/game.iso";
+}
+
+static bool CopyFileToSdCache(const std::string &sourcePath, const std::string &destinationPath, std::ofstream &log) {
+	FILE *source = fopen(sourcePath.c_str(), "rb");
+	if (!source) {
+		if (log.is_open())
+			log << "Failed to open source for SD copy: " << sourcePath << "\n";
+		return false;
+	}
+
+	FILE *destination = fopen(destinationPath.c_str(), "wb");
+	if (!destination) {
+		if (log.is_open())
+			log << "Failed to open destination for SD copy: " << destinationPath << "\n";
+		fclose(source);
+		return false;
+	}
+
+	const size_t bufferSize = 128 * 1024;
+	void *buffer = std::malloc(bufferSize);
+	if (!buffer) {
+		if (log.is_open())
+			log << "Failed to allocate copy buffer.\n";
+		fclose(source);
+		fclose(destination);
+		return false;
+	}
+
+	bool ok = true;
+	while (true) {
+		const size_t read = fread(buffer, 1, bufferSize, source);
+		if (read > 0 && fwrite(buffer, 1, read, destination) != read) {
+			if (log.is_open())
+				log << "Write error during SD copy.\n";
+			ok = false;
+			break;
+		}
+
+		if (read < bufferSize) {
+			if (ferror(source)) {
+				if (log.is_open())
+					log << "Read error during SD copy.\n";
+				ok = false;
+			}
+			break;
+		}
+	}
+
+	std::free(buffer);
+	fclose(source);
+	fclose(destination);
+	return ok;
 }
 
 
@@ -76,103 +269,48 @@ int main(int argc, char **argv) {
 	bool landscape;
 	NativeGetAppInfo(&app_name, &app_name_nice, &landscape, &version);
 
-	std::ofstream fw("sd:/NICOLOG.txt", std::ofstream::out);
+	mkdir("sd:/ppsspp", 0777);
+	std::ofstream fw("sd:/ppsspp/autoboot.log", std::ofstream::out);
 	uint64_t tID;
-   	tID = OSGetTitleID();
-   	char titleIDHex[16];
-   	bytes2hex(tID, titleIDHex);
-	   if (fw.is_open())
-		{
-			 fw << titleIDHex << "\n";
-		}
-   	char usbPath[] = "storage_usb:/usr/title/00050002/XXXXXXXX/content/game.iso";
-   	memcpy(&usbPath[23], titleIDHex, 8);
-	    if (fw.is_open())
-		{
-			 fw << usbPath << "\n";
-		}
-   	memcpy(&usbPath[32], titleIDHex + 8, 8);
-	    if (fw.is_open())
-		{
-			 fw << usbPath << "\n";
-		}
-   	if (!file_exists(usbPath)) {
-      memcpy(&usbPath[7], "Nand", 4);
-	   if (fw.is_open())
-		{
-			 fw << usbPath << "\n";
-		}
-   	}
+	tID = OSGetTitleID();
+	char titleIDHex[17];
+	bytes2hex(tID, titleIDHex);
 	if (fw.is_open())
-		{
-			 fw << "Trying to copy file" << "\n";
-		}
-	
-	if(file_exists("sd:/ppsspp/game.iso")){
+		fw << "Title ID: " << titleIDHex << "\n";
+
+	bool copyToSd = false;
+	std::string gamePath;
+	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, fw);
+
+	if (!gamePath.empty() && !file_exists(gamePath)) {
 		if (fw.is_open())
-		{
-			 fw << "Deleting game.iso"<< "\n";
-		}
-		std::remove("sd:/ppsspp/game.iso");
+			fw << "Configured game path was not found: " << gamePath << "\n";
+		gamePath.clear();
 	}
 
-	FILE * filer, * filew;
-	int numr,numw;
-	char buffer[] = memalign(0x40, 0x20000);
+	if (gamePath.empty())
+		gamePath = FindInstalledGamePath(titleIDHex, fw);
 
-	if((filer=fopen(usbPath,"rb"))==NULL){
-			if (fw.is_open())
-		{
-			 fw << "Cant read usb"<< "\n";
-		}
-		exit(1);
-	}
-
-	if((filew=fopen("sd:/ppsspp/game.iso","wb"))==NULL){
-			if (fw.is_open())
-		{
-			 fw << "write file error thingy good logs i know"<< "\n";
-		}
-		exit(1);
+	if (!gamePath.empty() && copyToSd) {
+		const std::string sdCachePath = BuildSdCachePathForSource(gamePath);
+		if (fw.is_open())
+			fw << "copy_to_sd enabled. Copying " << gamePath << " to " << sdCachePath << "\n";
+		if (CopyFileToSdCache(gamePath, sdCachePath, fw))
+			gamePath = sdCachePath;
+		else if (fw.is_open())
+			fw << "SD copy failed; attempting direct boot path instead.\n";
 	}
 
-	while(feof(filer)==0){	
-	if((numr=fread(buffer,1,1024,filer))!=1024){
-		if(ferror(filer)!=0){
-				if (fw.is_open())
-		{
-			 fw << "read error"<< "\n";
-		}
-		exit(1);
-		}
-		else if(feof(filer)!=0);
+	if (fw.is_open()) {
+		if (gamePath.empty())
+			fw << "No PSP source found. Launching PPSSPP menu.\n";
+		else
+			fw << "Launching PSP source: " << gamePath << "\n";
 	}
-	if((numw=fwrite(buffer,1,numr,filew))!=numr){
-			if (fw.is_open())
-		{
-			 fw << "write error"<< "\n";
-		}
-		exit(1);
-	}
-	}	
-	if (fw.is_open())
-		{
-			 fw << "wrote file\nTrying to close usb file"<< "\n";
-		}
-	fclose(filer);
-	if (fw.is_open())
-		{
-			 fw << "closed usb file/ trying to close sd file"<< "\n";
-		}
-	fclose(filew);
-if (fw.is_open())
-		{
-			 fw << "loading game i guess"<< "\n";
-		}
-	
-	const char *argv_[] = {
+
+	const char *argv_[3] = {
 		"sd:/ppsspp/PPSSPP.rpx",
-		"sd:/ppsspp/game.iso",
+		nullptr,
 //		"-d",
 //		"-v",
 //		"-j",
@@ -181,10 +319,12 @@ if (fw.is_open())
 //		"sd:/cube.elf",
 		nullptr
 	};
+	if (!gamePath.empty())
+		argv_[1] = gamePath.c_str();
+	const int nativeArgc = gamePath.empty() ? 1 : 2;
 
 	//arg size, arg, savegamedir, external dir, cache dir
-	NativeInit(sizeof(argv_) / sizeof(*argv_) - 1, argv_, "sd:/ppsspp/", "sd:/ppsspp/", nullptr);
-	//NativeInit(sizeof(argv_) / sizeof(*argv_) - 1, argv_, usbPath, usbPath, nullptr);
+	NativeInit(nativeArgc, argv_, "sd:/ppsspp/", "sd:/ppsspp/", nullptr);
 #if 0
 	UpdateScreenScale(854,480);
 #else

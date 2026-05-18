@@ -50,7 +50,7 @@ add_link_options(-Wl,--emit-relocs,--no-tls-optimize,--gc-sections)
 add_link_options(-nostartfiles -T ${WIIU_ROOT}/link.ld)
 
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} ${ARCH_FLAGS} -mregnames -Wa,--sectname-subst")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -include cstdint")
 
 if(NOT WIIU_LIBRARIES_ADDED)
 add_library(wiiu STATIC
@@ -104,6 +104,8 @@ endif()
 set(RPLTOOL "${WIIU_ROOT}/rpltool/rpltool")
 
 macro(add_rpx_target target)
-    add_custom_command(TARGET ${target} POST_BUILD
-                       COMMAND ${RPLTOOL} ${target} -S -o ${target}.rpx)
+    if(NOT WIIU_SKIP_RPLTOOL)
+        add_custom_command(TARGET ${target} POST_BUILD
+                           COMMAND ${RPLTOOL} ${target} -S -o ${target}.rpx)
+    endif()
 endmacro()

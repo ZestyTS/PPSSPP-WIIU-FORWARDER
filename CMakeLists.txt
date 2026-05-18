@@ -2133,9 +2133,20 @@ if(WIN32)
 	list(APPEND NativeAppSource ${WindowsFiles})
 endif()
 
+if(WIIU)
+	set(UIAtlasAssets
+		assets/ui_atlas.zim
+		assets/ui_atlas.meta
+	)
+else()
+	set(UIAtlasAssets
+		android/assets/ui_atlas.zim
+		android/assets/ui_atlas.meta
+	)
+endif()
+
 set(NativeAssets
-	android/assets/ui_atlas.zim
-	android/assets/ui_atlas.meta
+	${UIAtlasAssets}
 	assets/lang
 	assets/shaders
 	assets/Roboto-Condensed.ttf
@@ -2241,7 +2252,9 @@ endif()
 # installs
 if(NOT ANDROID)
 	file(INSTALL ${NativeAssets} DESTINATION assets)
-	file(INSTALL assets/flash0 DESTINATION assets)
+	if(EXISTS "${CMAKE_SOURCE_DIR}/assets/flash0")
+		file(INSTALL assets/flash0 DESTINATION assets)
+	endif()
 endif()
 # packaging and code signing
 if(IOS)
