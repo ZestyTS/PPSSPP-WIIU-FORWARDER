@@ -42,12 +42,28 @@ compatibility
 balanced
 fast
 max_speed
+custom
 
 fast is the Wii U baseline used by UInjectForge. It keeps 1x rendering and
 enables lighter graphics settings plus auto frameskip. balanced keeps safer
 speed settings without forced frameskip. compatibility avoids the most aggressive
 speed hacks. max_speed disables more visual work and sound for difficult games;
 use it only for performance testing.
+
+When performance_profile=custom, the runtime still starts from the fast
+baseline unless individual keys override it. Supported custom keys are:
+
+internal_resolution=1
+frame_skip=1
+auto_frame_skip=true
+enable_sound=true
+block_transfer_gpu=true
+disable_slow_framebuf_effects=true
+spline_bezier_quality=0
+
+The same keys can also override the named profiles for A/B testing. Values are
+clamped to the runtime's safe ranges: internal_resolution 1-4, frame_skip 0-5,
+and spline_bezier_quality 0-2.
 
 Runtime assets are loaded from installed title content/assets when present
 (`ppge_atlas.zim`, `ui_atlas.zim`, `langregion.ini`, or flash0 font assets

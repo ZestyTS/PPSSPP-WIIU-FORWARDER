@@ -99,6 +99,9 @@ static bool ParseBool(const std::string &value) {
 }
 
 static std::string NormalizePerformanceProfile(const std::string &value) {
+	if (EqualsIgnoreCase(value, "custom"))
+		return "custom";
+
 	if (EqualsIgnoreCase(value, "compat") ||
 		EqualsIgnoreCase(value, "compatibility") ||
 		EqualsIgnoreCase(value, "safe"))
@@ -121,7 +124,43 @@ static std::string NormalizePerformanceProfile(const std::string &value) {
 	return "fast";
 }
 
-static void ApplyWiiUPerformanceProfile(const std::string &profile, std::ofstream &log) {
+struct WiiUPerformanceOverrides {
+	bool hasInternalResolution = false;
+	int internalResolution = 1;
+	bool hasFrameSkip = false;
+	int frameSkip = 1;
+	bool hasAutoFrameSkip = false;
+	bool autoFrameSkip = true;
+	bool hasEnableSound = false;
+	bool enableSound = true;
+	bool hasBlockTransferGpu = false;
+	bool blockTransferGpu = true;
+	bool hasDisableSlowFramebufEffects = false;
+	bool disableSlowFramebufEffects = true;
+	bool hasSplineBezierQuality = false;
+	int splineBezierQuality = 0;
+};
+
+static int ClampInt(int value, int minValue, int maxValue) {
+	if (value < minValue)
+		return minValue;
+	if (value > maxValue)
+		return maxValue;
+	return value;
+}
+
+static bool ParseInt(const std::string &value, int *parsed) {
+	if (!parsed || value.empty())
+		return false;
+	char *end = nullptr;
+	const long result = std::strtol(value.c_str(), &end, 10);
+	if (end == value.c_str() || *end != '\0')
+		return false;
+	*parsed = (int)result;
+	return true;
+}
+
+static void ApplyWiiUPerformanceProfile(const std::string &profile, const WiiUPerformanceOverrides &overrides, std::ofstream &log) {
 	const std::string normalized = NormalizePerformanceProfile(profile);
 	if (log.is_open())
 		log << "Applying performance profile: " << normalized << "\n";
@@ -187,6 +226,42 @@ static void ApplyWiiUPerformanceProfile(const std::string &profile, std::ofstrea
 		g_Config.bDisableSlowFramebufEffects = true;
 		g_Config.bFragmentTestCache = true;
 	}
+
+	if (overrides.hasInternalResolution) {
+		g_Config.iInternalResolution = ClampInt(overrides.internalResolution, 1, 4);
+		if (log.is_open())
+			log << "Custom internal_resolution=" << g_Config.iInternalResolution << "\n";
+	}
+	if (overrides.hasFrameSkip) {
+		g_Config.iFrameSkip = ClampInt(overrides.frameSkip, 0, 5);
+		if (log.is_open())
+			log << "Custom frame_skip=" << g_Config.iFrameSkip << "\n";
+	}
+	if (overrides.hasAutoFrameSkip) {
+		g_Config.bAutoFrameSkip = overrides.autoFrameSkip;
+		if (log.is_open())
+			log << "Custom auto_frame_skip=" << (g_Config.bAutoFrameSkip ? "true" : "false") << "\n";
+	}
+	if (overrides.hasEnableSound) {
+		g_Config.bEnableSound = overrides.enableSound;
+		if (log.is_open())
+			log << "Custom enable_sound=" << (g_Config.bEnableSound ? "true" : "false") << "\n";
+	}
+	if (overrides.hasBlockTransferGpu) {
+		g_Config.bBlockTransferGPU = overrides.blockTransferGpu;
+		if (log.is_open())
+			log << "Custom block_transfer_gpu=" << (g_Config.bBlockTransferGPU ? "true" : "false") << "\n";
+	}
+	if (overrides.hasDisableSlowFramebufEffects) {
+		g_Config.bDisableSlowFramebufEffects = overrides.disableSlowFramebufEffects;
+		if (log.is_open())
+			log << "Custom disable_slow_framebuf_effects=" << (g_Config.bDisableSlowFramebufEffects ? "true" : "false") << "\n";
+	}
+	if (overrides.hasSplineBezierQuality) {
+		g_Config.iSplineBezierQuality = ClampInt(overrides.splineBezierQuality, 0, 2);
+		if (log.is_open())
+			log << "Custom spline_bezier_quality=" << g_Config.iSplineBezierQuality << "\n";
+	}
 }
 
 static std::string BuildInstalledContentPath(const char *volume, const char *titleIDHex, const char *fileName) {
@@ -225,7 +300,7 @@ static std::string ResolveConfiguredPath(const std::string &value, const std::st
 	return "sd:/ppsspp/" + value;
 }
 
-static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, std::ofstream &log) {
+static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
 	std::ifstream file(path);
 	if (!file.is_open())
 		return false;
@@ -269,6 +344,55 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 			EqualsIgnoreCase(key, "speed_profile")) {
 			*performanceProfile = NormalizePerformanceProfile(value);
 			handled = true;
+		} else if (overrides && (EqualsIgnoreCase(key, "internal_resolution") ||
+			EqualsIgnoreCase(key, "internalResolution") ||
+			EqualsIgnoreCase(key, "render_resolution") ||
+			EqualsIgnoreCase(key, "renderResolution"))) {
+			int parsed = 0;
+			if (ParseInt(value, &parsed)) {
+				overrides->internalResolution = ClampInt(parsed, 1, 4);
+				overrides->hasInternalResolution = true;
+				handled = true;
+			}
+		} else if (overrides && (EqualsIgnoreCase(key, "frame_skip") ||
+			EqualsIgnoreCase(key, "frameSkip") ||
+			EqualsIgnoreCase(key, "frameskip"))) {
+			int parsed = 0;
+			if (ParseInt(value, &parsed)) {
+				overrides->frameSkip = ClampInt(parsed, 0, 5);
+				overrides->hasFrameSkip = true;
+				handled = true;
+			}
+		} else if (overrides && (EqualsIgnoreCase(key, "auto_frame_skip") ||
+			EqualsIgnoreCase(key, "autoFrameSkip") ||
+			EqualsIgnoreCase(key, "auto_frameskip"))) {
+			overrides->autoFrameSkip = ParseBool(value);
+			overrides->hasAutoFrameSkip = true;
+			handled = true;
+		} else if (overrides && (EqualsIgnoreCase(key, "enable_sound") ||
+			EqualsIgnoreCase(key, "enableSound") ||
+			EqualsIgnoreCase(key, "sound"))) {
+			overrides->enableSound = ParseBool(value);
+			overrides->hasEnableSound = true;
+			handled = true;
+		} else if (overrides && (EqualsIgnoreCase(key, "block_transfer_gpu") ||
+			EqualsIgnoreCase(key, "blockTransferGpu"))) {
+			overrides->blockTransferGpu = ParseBool(value);
+			overrides->hasBlockTransferGpu = true;
+			handled = true;
+		} else if (overrides && (EqualsIgnoreCase(key, "disable_slow_framebuf_effects") ||
+			EqualsIgnoreCase(key, "disableSlowFramebufEffects"))) {
+			overrides->disableSlowFramebufEffects = ParseBool(value);
+			overrides->hasDisableSlowFramebufEffects = true;
+			handled = true;
+		} else if (overrides && (EqualsIgnoreCase(key, "spline_bezier_quality") ||
+			EqualsIgnoreCase(key, "splineBezierQuality"))) {
+			int parsed = 0;
+			if (ParseInt(value, &parsed)) {
+				overrides->splineBezierQuality = ClampInt(parsed, 0, 2);
+				overrides->hasSplineBezierQuality = true;
+				handled = true;
+			}
 		}
 	}
 
@@ -278,7 +402,7 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 	return handled;
 }
 
-static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, std::ofstream &log) {
+static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
 	const std::string configPaths[] = {
 		BuildInstalledContentPath("storage_usb", titleIDHex, "autoboot.txt"),
 		BuildInstalledContentPath("storage_Nand", titleIDHex, "autoboot.txt"),
@@ -287,7 +411,7 @@ static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath,
 	};
 
 	for (const std::string &path : configPaths) {
-		if (ReadAutobootConfig(path, gamePath, copyToSd, performanceProfile, log))
+		if (ReadAutobootConfig(path, gamePath, copyToSd, performanceProfile, overrides, log))
 			return true;
 	}
 
@@ -427,8 +551,9 @@ int main(int argc, char **argv) {
 
 	bool copyToSd = false;
 	std::string performanceProfile = "fast";
+	WiiUPerformanceOverrides performanceOverrides;
 	std::string gamePath;
-	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, &performanceProfile, fw);
+	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, &performanceProfile, &performanceOverrides, fw);
 
 	if (!gamePath.empty() && !file_exists(gamePath)) {
 		if (fw.is_open())
@@ -492,7 +617,7 @@ int main(int argc, char **argv) {
 	printf("Pixels: %i x %i\n", pixel_xres, pixel_yres);
 	printf("Virtual pixels: %i x %i\n", dp_xres, dp_yres);
 
-	ApplyWiiUPerformanceProfile(performanceProfile, fw);
+	ApplyWiiUPerformanceProfile(performanceProfile, performanceOverrides, fw);
 	std::string error_string;
 	GraphicsContext *ctx;
 	host->InitGraphics(&error_string, &ctx);
