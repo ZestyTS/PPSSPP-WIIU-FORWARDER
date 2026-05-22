@@ -404,6 +404,7 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 
 static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
 	const std::string configPaths[] = {
+		"fs:/vol/content/autoboot.txt",
 		BuildInstalledContentPath("storage_usb", titleIDHex, "autoboot.txt"),
 		BuildInstalledContentPath("storage_Nand", titleIDHex, "autoboot.txt"),
 		"sd:/wiiu/apps/ppsspp/autoboot.txt",
@@ -418,8 +419,48 @@ static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath,
 	return false;
 }
 
+static bool HasInstalledPackageContent() {
+	const char *files[] = {
+		"autoboot.txt",
+		"game.iso",
+		"game.cso",
+		"game.pbp",
+		"assets/ppge_atlas.zim",
+		"assets/ui_atlas.zim",
+		"assets/langregion.ini",
+		"assets/flash0/font/ltn0.pgf"
+	};
+
+	for (const char *fileName : files) {
+		const std::string path = std::string("fs:/vol/content/") + fileName;
+		if (file_exists(path))
+			return true;
+	}
+
+	return false;
+}
+
+static std::string SelectWritableRoot(bool installedPackage) {
+	if (installedPackage) {
+		mkdir("fs:/vol/save/ppsspp", 0777);
+		if (file_exists("fs:/vol/save/ppsspp"))
+			return "fs:/vol/save/ppsspp/";
+	}
+
+	mkdir("sd:/ppsspp", 0777);
+	return "sd:/ppsspp/";
+}
+
 static std::string FindInstalledGamePath(const char *titleIDHex, std::ofstream &log) {
 	const char *files[] = { "game.iso", "game.cso", "game.pbp" };
+	for (const char *fileName : files) {
+		const std::string path = std::string("fs:/vol/content/") + fileName;
+		if (log.is_open())
+			log << "Checking package content path: " << path << "\n";
+		if (file_exists(path))
+			return path;
+	}
+
 	const char *volumes[] = { "storage_usb", "storage_Nand" };
 
 	for (const char *volume : volumes) {
@@ -436,6 +477,19 @@ static std::string FindInstalledGamePath(const char *titleIDHex, std::ofstream &
 }
 
 static std::string FindRuntimeRoot(const char *titleIDHex, std::ofstream &log) {
+	const std::string packageRoot = "fs:/vol/content/";
+	const std::string packagePpgeAtlas = packageRoot + "assets/ppge_atlas.zim";
+	const std::string packageUiAtlas = packageRoot + "assets/ui_atlas.zim";
+	const std::string packageLangRegion = packageRoot + "assets/langregion.ini";
+	const std::string packageFlash0Font = packageRoot + "assets/flash0/font/ltn0.pgf";
+	if (log.is_open())
+		log << "Checking package-local PPSSPP runtime root: " << packageRoot << "\n";
+	if (file_exists(packagePpgeAtlas) || file_exists(packageUiAtlas) || file_exists(packageLangRegion) || file_exists(packageFlash0Font)) {
+		if (log.is_open())
+			log << "Using package-local runtime root: " << packageRoot << "\n";
+		return packageRoot;
+	}
+
 	const char *volumes[] = { "storage_usb", "storage_Nand" };
 
 	for (const char *volume : volumes) {
@@ -464,6 +518,14 @@ static std::string BuildSdCachePathForSource(const std::string &sourcePath) {
 	if (EndsWithIgnoreCase(sourcePath, ".pbp"))
 		return "sd:/ppsspp/game.pbp";
 	return "sd:/ppsspp/game.iso";
+}
+
+static std::string BuildWritableCachePathForSource(const std::string &sourcePath, const std::string &writableRoot) {
+	if (EndsWithIgnoreCase(sourcePath, ".cso"))
+		return EnsureTrailingSlash(writableRoot) + "game.cso";
+	if (EndsWithIgnoreCase(sourcePath, ".pbp"))
+		return EnsureTrailingSlash(writableRoot) + "game.pbp";
+	return EnsureTrailingSlash(writableRoot) + "game.iso";
 }
 
 static bool CopyFileToSdCache(const std::string &sourcePath, const std::string &destinationPath, std::ofstream &log) {
@@ -522,10 +584,6 @@ static bool CopyFileToSdCache(const std::string &sourcePath, const std::string &
 
 
 int main(int argc, char **argv) {
-	IOSUHAX_Open(NULL);
-	int fsaHandle = IOSUHAX_FSA_Open();
-	mount_fs("storage_Nand", fsaHandle, NULL, "/vol/storage_mlc01");
-	mount_fs("storage_usb", fsaHandle, NULL, "/vol/storage_usb01");
 	PROFILE_INIT();
 	PPCSetFpIEEEMode();
 
@@ -537,14 +595,19 @@ int main(int argc, char **argv) {
 	bool landscape;
 	NativeGetAppInfo(&app_name, &app_name_nice, &landscape, &version);
 
-	mkdir("sd:/ppsspp", 0777);
-	std::ofstream fw("sd:/ppsspp/autoboot.log", std::ofstream::out);
 	uint64_t tID;
 	tID = OSGetTitleID();
 	char titleIDHex[17];
 	bytes2hex(tID, titleIDHex);
+	const bool installedPackage = HasInstalledPackageContent();
+	const std::string writableRoot = SelectWritableRoot(installedPackage);
+	const std::string logPath = writableRoot + "autoboot.log";
+	std::ofstream fw(logPath, std::ofstream::out);
 	if (fw.is_open())
-		fw << "Title ID: " << titleIDHex << "\n";
+		fw << "Title ID: " << titleIDHex << "\n"
+			<< "Installed package content detected: " << (installedPackage ? "yes" : "no") << "\n"
+			<< "Writable root: " << writableRoot << "\n"
+			<< "Storage mounts are skipped for normal installable launch; using fs:/vol/content first.\n";
 	const std::string runtimeRoot = EnsureTrailingSlash(FindRuntimeRoot(titleIDHex, fw));
 	if (fw.is_open())
 		fw << "Runtime root: " << runtimeRoot << "\n";
@@ -565,7 +628,9 @@ int main(int argc, char **argv) {
 		gamePath = FindInstalledGamePath(titleIDHex, fw);
 
 	if (!gamePath.empty() && copyToSd) {
-		const std::string sdCachePath = BuildSdCachePathForSource(gamePath);
+		const std::string sdCachePath = installedPackage
+			? BuildWritableCachePathForSource(gamePath, writableRoot)
+			: BuildSdCachePathForSource(gamePath);
 		if (fw.is_open())
 			fw << "copy_to_sd enabled. Copying " << gamePath << " to " << sdCachePath << "\n";
 		if (CopyFileToSdCache(gamePath, sdCachePath, fw))
@@ -597,7 +662,7 @@ int main(int argc, char **argv) {
 	const int nativeArgc = gamePath.empty() ? 1 : 2;
 
 	//arg size, arg, savegamedir, external dir, cache dir
-	NativeInit(nativeArgc, argv_, "sd:/ppsspp/", runtimeRoot.c_str(), "sd:/ppsspp/");
+	NativeInit(nativeArgc, argv_, writableRoot.c_str(), runtimeRoot.c_str(), writableRoot.c_str());
 #if 0
 	UpdateScreenScale(854,480);
 #else

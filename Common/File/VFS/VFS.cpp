@@ -30,7 +30,7 @@ static bool IsLocalPath(const char *path) {
 #ifdef _WIN32
 	return isUnixLocal || (isalpha(path[0]) && path[1] == ':');
 #elif defined(__wiiu__)
-	return isUnixLocal || !strncmp(path, "sd:/", 4) || !strncmp(path, "storage_usb:/", 5);
+	return isUnixLocal || !strncmp(path, "sd:/", 4) || !strncmp(path, "storage_usb:/", 5) || !strncmp(path, "fs:/", 4);
 #else
 	return isUnixLocal;
 #endif
