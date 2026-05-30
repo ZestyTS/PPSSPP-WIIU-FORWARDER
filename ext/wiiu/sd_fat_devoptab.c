@@ -1019,3 +1019,47 @@ int unmount_sd_fat(const char *path)
     }
     return result;
 }
+
+int mount_wiiu_fs_root(const char *path)
+{
+    void* pClient = malloc(sizeof(FSClient));
+    void* pCmd = malloc(sizeof(FSCmdBlock));
+
+    if(!pClient || !pCmd) {
+        if(pClient)
+            free(pClient);
+        if(pCmd)
+            free(pCmd);
+        return -2;
+    }
+
+    FSInit();
+    FSInitCmdBlock(pCmd);
+    FSAddClient(pClient, -1);
+
+    int result = sd_fat_add_device(path, "", pClient, pCmd);
+    if(result != 0) {
+        FSDelClient(pClient, -1);
+        free(pClient);
+        free(pCmd);
+    }
+
+    return result;
+}
+
+int unmount_wiiu_fs_root(const char *path)
+{
+    void *pClient = 0;
+    void *pCmd = 0;
+    char *mountPath = 0;
+
+    int result = sd_fat_remove_device(path, &pClient, &pCmd, &mountPath);
+    if(result == 0)
+    {
+        FSDelClient(pClient, -1);
+        free(pClient);
+        free(pCmd);
+        free(mountPath);
+    }
+    return result;
+}

@@ -78,11 +78,18 @@ void MCPHookClose(void) {
 }
 
 static int iosuhaxMount = 0;
+static int fsRootMount = 0;
+
+static int is_standalone_installable(void) {
+	uint64_t title_id = OSGetTitleID();
+	return (uint32_t)(title_id >> 32) == 0x00050002;
+}
 
 static void fsdev_init(void) {
 
 	iosuhaxMount = 0;
-	if (!OSIsHLE()) {
+	fsRootMount = 0;
+	if (!OSIsHLE() && !is_standalone_installable()) {
 		int res = IOSUHAX_Open(NULL);
 
 		if (res < 0)
@@ -95,6 +102,8 @@ static void fsdev_init(void) {
 		}
 	}
 	mount_sd_fat("sd");
+	if (mount_wiiu_fs_root("fs") == 0)
+		fsRootMount = 1;
 }
 static void fsdev_exit(void) {
 	if (iosuhaxMount) {
@@ -107,6 +116,8 @@ static void fsdev_exit(void) {
 			IOSUHAX_Close();
 		return;
 	}
+	if (fsRootMount)
+		unmount_wiiu_fs_root("fs");
 	unmount_sd_fat("sd");
 }
 
@@ -128,6 +139,7 @@ void __rpx_start(int argc, char **argv) {
 	fsdev_init();
 
 	DEBUG_VAR(iosuhaxMount);
+	DEBUG_VAR(fsRootMount);
 	DEBUG_VAR(mcp_hook_fd);
 	DEBUG_VAR2(MEM1_avail());
 	DEBUG_VAR2(MEM2_avail());

@@ -451,6 +451,23 @@ static std::string SelectWritableRoot(bool installedPackage) {
 	return "sd:/ppsspp/";
 }
 
+static bool OpenAutobootDiagnosticLog(const std::string &fallbackRoot, std::ofstream *log, std::string *logPath) {
+	if (!log || !logPath)
+		return false;
+
+	mkdir("sd:/uinjectforge", 0777);
+	mkdir("sd:/uinjectforge/ppsspp", 0777);
+	*logPath = "sd:/uinjectforge/ppsspp/autoboot.log";
+	log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
+	if (log->is_open())
+		return true;
+
+	log->clear();
+	*logPath = EnsureTrailingSlash(fallbackRoot) + "autoboot.log";
+	log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
+	return log->is_open();
+}
+
 static std::string FindInstalledGamePath(const char *titleIDHex, std::ofstream &log) {
 	const char *files[] = { "game.iso", "game.cso", "game.pbp" };
 	for (const char *fileName : files) {
@@ -601,12 +618,14 @@ int main(int argc, char **argv) {
 	bytes2hex(tID, titleIDHex);
 	const bool installedPackage = HasInstalledPackageContent();
 	const std::string writableRoot = SelectWritableRoot(installedPackage);
-	const std::string logPath = writableRoot + "autoboot.log";
-	std::ofstream fw(logPath, std::ofstream::out);
+	std::string logPath;
+	std::ofstream fw;
+	OpenAutobootDiagnosticLog(writableRoot, &fw, &logPath);
 	if (fw.is_open())
 		fw << "Title ID: " << titleIDHex << "\n"
 			<< "Installed package content detected: " << (installedPackage ? "yes" : "no") << "\n"
 			<< "Writable root: " << writableRoot << "\n"
+			<< "Diagnostic log: " << logPath << "\n"
 			<< "Storage mounts are skipped for normal installable launch; using fs:/vol/content first.\n";
 	const std::string runtimeRoot = EnsureTrailingSlash(FindRuntimeRoot(titleIDHex, fw));
 	if (fw.is_open())
