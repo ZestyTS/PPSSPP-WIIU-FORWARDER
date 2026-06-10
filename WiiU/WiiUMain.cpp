@@ -53,6 +53,12 @@ bool IsPathExist(const std::string &s)
   return (stat (s.c_str(), &buffer) == 0);
 }
 
+static void EnsureDirectoryIfMissing(const char *path) {
+	struct stat info;
+	if (stat(path, &info) != 0)
+		mkdir(path, 0777);
+}
+
 void bytes2hex(uint64_t input, char* output) {
     const char table[] = "0123456789ABCDEF";
     for(size_t i = 0, o = 15; i != 16; i++, o--) {
@@ -537,15 +543,9 @@ static std::string BuildSdCachePathForSource(const std::string &sourcePath) {
 	return "sd:/ppsspp/game.iso";
 }
 
-static std::string BuildWritableCachePathForSource(const std::string &sourcePath, const std::string &writableRoot) {
-	if (EndsWithIgnoreCase(sourcePath, ".cso"))
-		return EnsureTrailingSlash(writableRoot) + "game.cso";
-	if (EndsWithIgnoreCase(sourcePath, ".pbp"))
-		return EnsureTrailingSlash(writableRoot) + "game.pbp";
-	return EnsureTrailingSlash(writableRoot) + "game.iso";
-}
-
 static bool CopyFileToSdCache(const std::string &sourcePath, const std::string &destinationPath, std::ofstream &log) {
+	EnsureDirectoryIfMissing("sd:/ppsspp");
+
 	FILE *source = fopen(sourcePath.c_str(), "rb");
 	if (!source) {
 		if (log.is_open())
@@ -647,9 +647,7 @@ int main(int argc, char **argv) {
 		gamePath = FindInstalledGamePath(titleIDHex, fw);
 
 	if (!gamePath.empty() && copyToSd) {
-		const std::string sdCachePath = installedPackage
-			? BuildWritableCachePathForSource(gamePath, writableRoot)
-			: BuildSdCachePathForSource(gamePath);
+		const std::string sdCachePath = BuildSdCachePathForSource(gamePath);
 		if (fw.is_open())
 			fw << "copy_to_sd enabled. Copying " << gamePath << " to " << sdCachePath << "\n";
 		if (CopyFileToSdCache(gamePath, sdCachePath, fw))

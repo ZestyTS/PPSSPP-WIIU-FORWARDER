@@ -29,7 +29,8 @@ performance_profile=fast
 If no config is present, it tries to boot game.iso, game.cso, or game.pbp from
 the installed title content folder. Direct installed-content boot is attempted
 first. Set copy_to_sd=true only when testing a runtime that cannot read the
-installed storage path directly.
+installed content path directly; that path copies the packaged game to
+sd:/ppsspp/game.iso, game.cso, or game.pbp before launch.
 
 Standalone installable titles skip the legacy IOSUHAX/MCP storage hook during
 startup and mount a fs: device backed by Wii U FS paths. This lets packaged
