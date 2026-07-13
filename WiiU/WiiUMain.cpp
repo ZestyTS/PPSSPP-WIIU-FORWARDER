@@ -11,6 +11,7 @@
 #include <wiiu/os/debug.h>
 #include <wiiu/gx2/event.h>
 #include <wiiu/ax/core.h>
+#include <wiiu/procui.h>
 #include <iosuhax.h>
 #include <iosuhax_devoptab.h>
 #include <wiiu/ios.h>
@@ -34,11 +35,37 @@ const char *PROGRAM_NAME = "PPSSPP";
 const char *PROGRAM_VERSION = "Wii U Autoboot";
 
 static int g_QuitRequested;
+
+static void LogStage(std::ofstream &log, const char *stage) {
+	if (!log.is_open())
+		return;
+
+	log << "Stage: " << stage << "\n";
+	log.flush();
+}
+
 void System_SendMessage(const char *command, const char *parameter) {
 	if (!strcmp(command, "finish")) {
 		g_QuitRequested = true;
 		UpdateUIState(UISTATE_EXIT);
 		Core_Stop();
+	}
+}
+
+bool WiiUProcessSystemMessages() {
+	const ProcUIStatus status = ProcUIProcessMessages(false);
+	switch (status) {
+	case PROCUI_STATUS_IN_FOREGROUND:
+		return true;
+	case PROCUI_STATUS_RELEASE_FOREGROUND:
+		ProcUIDrawDoneRelease();
+		return false;
+	case PROCUI_STATUS_EXITING:
+		System_SendMessage("finish", "");
+		return false;
+	case PROCUI_STATUS_IN_BACKGROUND:
+	default:
+		return false;
 	}
 }
 
@@ -127,7 +154,7 @@ static std::string NormalizePerformanceProfile(const std::string &value) {
 		EqualsIgnoreCase(value, "maximum"))
 		return "max_speed";
 
-	return "fast";
+	return "compatibility";
 }
 
 struct WiiUPerformanceOverrides {
@@ -203,12 +230,22 @@ static void ApplyWiiUPerformanceProfile(const std::string &profile, const WiiUPe
 	g_Config.bClearFramebuffersOnFirstUseHack = true;
 
 	if (normalized == "compatibility") {
-		g_Config.iFrameSkip = 0;
-		g_Config.bAutoFrameSkip = false;
+		// Upstream's Wii U port only documented game execution through the
+		// interpreter and software renderer. Keep this path deliberately slow
+		// so it can distinguish runtime startup from the unfinished JIT/GX2 path.
+		g_Config.iCpuCore = (int)CPUCore::INTERPRETER;
+		g_Config.bFastMemory = false;
+		g_Config.bSeparateIOThread = false;
+		g_Config.bSoftwareRendering = true;
+		g_Config.bHardwareTransform = false;
+		g_Config.bSoftwareSkinning = true;
+		g_Config.bVertexCache = false;
+		g_Config.iFrameSkip = 1;
+		g_Config.bAutoFrameSkip = true;
 		g_Config.iSplineBezierQuality = 2;
-		g_Config.bBlockTransferGPU = true;
+		g_Config.bBlockTransferGPU = false;
 		g_Config.bDisableSlowFramebufEffects = false;
-		g_Config.bFragmentTestCache = true;
+		g_Config.bFragmentTestCache = false;
 	} else if (normalized == "balanced") {
 		g_Config.iFrameSkip = 0;
 		g_Config.bAutoFrameSkip = false;
@@ -268,6 +305,12 @@ static void ApplyWiiUPerformanceProfile(const std::string &profile, const WiiUPe
 		if (log.is_open())
 			log << "Custom spline_bezier_quality=" << g_Config.iSplineBezierQuality << "\n";
 	}
+
+	if (log.is_open()) {
+		log << "CPU core: " << (g_Config.iCpuCore == (int)CPUCore::INTERPRETER ? "interpreter" : "JIT") << "\n"
+			<< "PSP renderer: " << (g_Config.bSoftwareRendering ? "software" : "GX2") << "\n";
+		log.flush();
+	}
 }
 
 static std::string BuildInstalledContentPath(const char *volume, const char *titleIDHex, const char *fileName) {
@@ -306,7 +349,7 @@ static std::string ResolveConfiguredPath(const std::string &value, const std::st
 	return "sd:/ppsspp/" + value;
 }
 
-static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
+static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, bool *copyToSd, bool *menuOnly, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
 	std::ifstream file(path);
 	if (!file.is_open())
 		return false;
@@ -343,6 +386,17 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 			EqualsIgnoreCase(key, "copyToSd") ||
 			EqualsIgnoreCase(key, "copy")) {
 			*copyToSd = ParseBool(value);
+			handled = true;
+		} else if (menuOnly && (EqualsIgnoreCase(key, "runtime_probe") ||
+			EqualsIgnoreCase(key, "menu_only") ||
+			EqualsIgnoreCase(key, "menuOnly"))) {
+			*menuOnly = ParseBool(value);
+			handled = true;
+		} else if (menuOnly && (EqualsIgnoreCase(key, "launch_mode") ||
+			EqualsIgnoreCase(key, "launchMode"))) {
+			*menuOnly = EqualsIgnoreCase(value, "menu") ||
+				EqualsIgnoreCase(value, "probe") ||
+				EqualsIgnoreCase(value, "runtime_probe");
 			handled = true;
 		} else if (EqualsIgnoreCase(key, "performance_profile") ||
 			EqualsIgnoreCase(key, "performanceProfile") ||
@@ -408,7 +462,7 @@ static bool ReadAutobootConfig(const std::string &path, std::string *gamePath, b
 	return handled;
 }
 
-static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
+static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath, bool *copyToSd, bool *menuOnly, std::string *performanceProfile, WiiUPerformanceOverrides *overrides, std::ofstream &log) {
 	const std::string configPaths[] = {
 		"fs:/vol/content/autoboot.txt",
 		BuildInstalledContentPath("storage_usb", titleIDHex, "autoboot.txt"),
@@ -418,7 +472,7 @@ static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath,
 	};
 
 	for (const std::string &path : configPaths) {
-		if (ReadAutobootConfig(path, gamePath, copyToSd, performanceProfile, overrides, log))
+		if (ReadAutobootConfig(path, gamePath, copyToSd, menuOnly, performanceProfile, overrides, log))
 			return true;
 	}
 
@@ -465,12 +519,16 @@ static bool OpenAutobootDiagnosticLog(const std::string &fallbackRoot, std::ofst
 	mkdir("sd:/uinjectforge/ppsspp", 0777);
 	*logPath = "sd:/uinjectforge/ppsspp/autoboot.log";
 	log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
-	if (log->is_open())
+	if (log->is_open()) {
+		log->setf(std::ios::unitbuf);
 		return true;
+	}
 
 	log->clear();
 	*logPath = EnsureTrailingSlash(fallbackRoot) + "autoboot.log";
 	log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
+	if (log->is_open())
+		log->setf(std::ios::unitbuf);
 	return log->is_open();
 }
 
@@ -621,6 +679,7 @@ int main(int argc, char **argv) {
 	std::string logPath;
 	std::ofstream fw;
 	OpenAutobootDiagnosticLog(writableRoot, &fw, &logPath);
+	LogStage(fw, "main entered");
 	if (fw.is_open())
 		fw << "Title ID: " << titleIDHex << "\n"
 			<< "Installed package content detected: " << (installedPackage ? "yes" : "no") << "\n"
@@ -632,10 +691,11 @@ int main(int argc, char **argv) {
 		fw << "Runtime root: " << runtimeRoot << "\n";
 
 	bool copyToSd = false;
-	std::string performanceProfile = "fast";
+	bool menuOnly = false;
+	std::string performanceProfile = "compatibility";
 	WiiUPerformanceOverrides performanceOverrides;
 	std::string gamePath;
-	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, &performanceProfile, &performanceOverrides, fw);
+	TryReadAutobootConfig(titleIDHex, &gamePath, &copyToSd, &menuOnly, &performanceProfile, &performanceOverrides, fw);
 
 	if (!gamePath.empty() && !file_exists(gamePath)) {
 		if (fw.is_open())
@@ -646,7 +706,7 @@ int main(int argc, char **argv) {
 	if (gamePath.empty())
 		gamePath = FindInstalledGamePath(titleIDHex, fw);
 
-	if (!gamePath.empty() && copyToSd) {
+	if (!menuOnly && !gamePath.empty() && copyToSd) {
 		const std::string sdCachePath = BuildSdCachePathForSource(gamePath);
 		if (fw.is_open())
 			fw << "copy_to_sd enabled. Copying " << gamePath << " to " << sdCachePath << "\n";
@@ -657,7 +717,9 @@ int main(int argc, char **argv) {
 	}
 
 	if (fw.is_open()) {
-		if (gamePath.empty())
+		if (menuOnly)
+			fw << "Runtime menu probe enabled. The packaged PSP source will not be launched.\n";
+		else if (gamePath.empty())
 			fw << "No PSP source found. Launching PPSSPP menu.\n";
 		else
 			fw << "Launching PSP source: " << gamePath << "\n";
@@ -674,12 +736,14 @@ int main(int argc, char **argv) {
 //		"sd:/cube.elf",
 		nullptr
 	};
-	if (!gamePath.empty())
+	if (!menuOnly && !gamePath.empty())
 		argv_[1] = gamePath.c_str();
-	const int nativeArgc = gamePath.empty() ? 1 : 2;
+	const int nativeArgc = menuOnly || gamePath.empty() ? 1 : 2;
 
 	//arg size, arg, savegamedir, external dir, cache dir
+	LogStage(fw, "before NativeInit");
 	NativeInit(nativeArgc, argv_, writableRoot.c_str(), runtimeRoot.c_str(), writableRoot.c_str());
+	LogStage(fw, "after NativeInit");
 #if 0
 	UpdateScreenScale(854,480);
 #else
@@ -699,14 +763,37 @@ int main(int argc, char **argv) {
 	printf("Pixels: %i x %i\n", pixel_xres, pixel_yres);
 	printf("Virtual pixels: %i x %i\n", dp_xres, dp_yres);
 
+	LogStage(fw, "before performance profile");
 	ApplyWiiUPerformanceProfile(performanceProfile, performanceOverrides, fw);
+	LogStage(fw, "after performance profile");
 	std::string error_string;
-	GraphicsContext *ctx;
-	host->InitGraphics(&error_string, &ctx);
-	NativeInitGraphics(ctx);
+	GraphicsContext *ctx = nullptr;
+	LogStage(fw, "before platform graphics init");
+	if (!host->InitGraphics(&error_string, &ctx) || !ctx) {
+		if (fw.is_open())
+			fw << "Platform graphics initialization failed: " << error_string << "\n";
+		NativeShutdown();
+		delete host;
+		host = nullptr;
+		return 1;
+	}
+	LogStage(fw, "after platform graphics init");
+	LogStage(fw, "before native graphics init");
+	if (!NativeInitGraphics(ctx)) {
+		LogStage(fw, "native graphics init failed");
+		host->ShutdownGraphics();
+		NativeShutdown();
+		delete host;
+		host = nullptr;
+		return 1;
+	}
+	LogStage(fw, "after native graphics init");
 	NativeResized();
 
+	LogStage(fw, "before sound init");
 	host->InitSound();
+	LogStage(fw, "after sound init");
+	LogStage(fw, "before emulator run loop");
 	while (true) {
 		if (g_QuitRequested)
 			break;
@@ -715,11 +802,16 @@ int main(int argc, char **argv) {
 			UpdateUIState(UISTATE_MENU);
 		Core_Run(ctx);
 	}
+	LogStage(fw, "after emulator run loop");
 	host->ShutdownSound();
 	//unmount_fs("storage_Nand");
 	//unmount_fs("storage_usb");
 	NativeShutdownGraphics();
+	host->ShutdownGraphics();
 	NativeShutdown();
+	delete host;
+	host = nullptr;
+	LogStage(fw, "clean shutdown complete");
 
 	return 0;
 }

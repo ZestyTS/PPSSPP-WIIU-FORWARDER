@@ -10,6 +10,7 @@
 #include <wiiu/os/systeminfo.h>
 #include <wiiu/sysapp.h>
 #include <sys/socket.h>
+#include <sys/stat.h>
 
 #include "fs_utils.h"
 #include "sd_fat_devoptab.h"
@@ -79,6 +80,29 @@ void MCPHookClose(void) {
 
 static int iosuhaxMount = 0;
 static int fsRootMount = 0;
+static FILE *entryLog = NULL;
+
+static void entry_log_open(void) {
+	mkdir("sd:/uinjectforge", 0777);
+	mkdir("sd:/uinjectforge/ppsspp", 0777);
+	entryLog = fopen("sd:/uinjectforge/ppsspp/entry.log", "w");
+	if (!entryLog)
+		entryLog = fopen("fs:/vol/save/ppsspp-entry.log", "w");
+}
+
+static void entry_log_stage(const char *stage) {
+	if (!entryLog)
+		return;
+	fprintf(entryLog, "Stage: %s\n", stage);
+	fflush(entryLog);
+}
+
+static void entry_log_close(void) {
+	if (!entryLog)
+		return;
+	fclose(entryLog);
+	entryLog = NULL;
+}
 
 static int is_standalone_installable(void) {
 	uint64_t title_id = OSGetTitleID();
@@ -122,6 +146,8 @@ static void fsdev_exit(void) {
 }
 
 __attribute__((noreturn)) void __shutdown_program(void) {
+	entry_log_stage("shutdown requested");
+	entry_log_close();
 	fsdev_exit();
 	memoryRelease();
 	wiiu_log_deinit();
@@ -137,6 +163,8 @@ void __rpx_start(int argc, char **argv) {
 	DEBUG_LINE();
 	memoryInitialize();
 	fsdev_init();
+	entry_log_open();
+	entry_log_stage("storage initialized");
 
 	DEBUG_VAR(iosuhaxMount);
 	DEBUG_VAR(fsRootMount);
@@ -144,15 +172,21 @@ void __rpx_start(int argc, char **argv) {
 	DEBUG_VAR2(MEM1_avail());
 	DEBUG_VAR2(MEM2_avail());
 	DEBUG_VAR2(MEMBucket_avail());
+	entry_log_stage("before C++ constructors");
 	__init();
+	entry_log_stage("after C++ constructors");
+	entry_log_stage("before main");
 	main(argc, argv);
+	entry_log_stage("after main");
 	__fini();
+	entry_log_stage("after C++ destructors");
 
 	deinit_os_exceptions();
 	__shutdown_program();
 }
 
 __attribute__((noreturn)) void abort(void) {
+	entry_log_stage("abort called");
 	printf("Abort called\n");
 	DEBUG_VAR(MEM2_avail());
 	fflush(stdout);

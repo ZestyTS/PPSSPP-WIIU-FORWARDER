@@ -23,11 +23,12 @@ private:
 		GX2TVRenderMode mode;
 	} RenderMode;
 	Draw::DrawContext *draw_ = nullptr;
-	void *cmd_buffer_;
-	RenderMode render_mode_;
-	void *drc_scan_buffer_;
-	void *tv_scan_buffer_;
+	void *cmd_buffer_ = nullptr;
+	RenderMode render_mode_ = {};
+	void *drc_scan_buffer_ = nullptr;
+	void *tv_scan_buffer_ = nullptr;
 	GX2ColorBuffer color_buffer_ = {};
 	GX2DepthBuffer depth_buffer_ = {};
-	GX2ContextState *ctx_state_;
+	GX2ContextState *ctx_state_ = nullptr;
+	bool gx2_initialized_ = false;
 };
