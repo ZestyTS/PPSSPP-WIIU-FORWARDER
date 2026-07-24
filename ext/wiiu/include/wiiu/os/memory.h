@@ -47,8 +47,9 @@ static inline bool AddrIsAligned(void* addr, u32 align)
    return !((uintptr_t)addr & (align - 1));
 
 }
-void memoryInitialize(void);
+BOOL memoryInitialize(void);
 void memoryRelease(void);
+const char *memoryInitializationError(void);
 
 void * MEM2_alloc(unsigned int size, unsigned int align);
 void MEM2_free(void *ptr);
