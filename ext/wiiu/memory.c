@@ -16,7 +16,7 @@
  ****************************************************************************/
 #include <malloc.h>
 #include <string.h>
-#include "memory.h"
+#include <wiiu/os/memory.h>
 #include <wiiu/mem.h>
 
 static MEMExpandedHeap* mem1_heap;

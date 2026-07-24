@@ -4,7 +4,7 @@
 #include <excpt.h>
 #endif
 #define TLS_SUPPORTED
-#elif defined(__ANDROID__) || defined(__wiiu__)
+#elif defined(__ANDROID__)
 #define TLS_SUPPORTED
 #endif
 
