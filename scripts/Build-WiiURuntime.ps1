@@ -32,6 +32,21 @@ if (-not (Test-Path -LiteralPath (Join-Path $buildDirectory 'CMakeCache.txt') -P
     throw "The configured Wii U build directory was not found: $buildDirectory"
 }
 
+$entrySourcePath = Join-Path $repoRoot 'ext\wiiu\entry.c'
+$entrySource = Get-Content -LiteralPath $entrySourcePath -Raw
+if ($entrySource -match '\b(?:fopen|mkdir|fprintf|fclose)\s*\(') {
+    throw 'PPSSPP entry.c performs persistent filesystem I/O before main. Keep pre-main diagnostics on OSReport only.'
+}
+
+$memoryInitializeCall = $entrySource.IndexOf('if (!memoryInitialize())', [StringComparison]::Ordinal)
+$filesystemInitializeCall = $entrySource.IndexOf("`tfsdev_init();", [StringComparison]::Ordinal)
+if ($memoryInitializeCall -lt 0 -or $filesystemInitializeCall -lt 0) {
+    throw 'Unable to verify PPSSPP memory/filesystem startup order in entry.c.'
+}
+if ($memoryInitializeCall -gt $filesystemInitializeCall) {
+    throw 'PPSSPP filesystem startup runs before custom memory initialization. Restore memoryInitialize before fsdev_init.'
+}
+
 $mount = "type=bind,source=$repoRoot,target=/src"
 $buildArguments = @(
     'run',
@@ -244,9 +259,10 @@ $capabilities = @(
     'package-content-v1',
     'menu-probe-v1',
     'complete-assets-v1',
-    'early-entry-log-v2',
     'heap-failure-reporting-v1',
-    'persistent-exception-log-v1',
+    'main-stage-diagnostic-log-v1',
+    'mount-aware-startup-v1',
+    'osreport-pre-main-diagnostics-v1',
     'debug-tls-free-v1',
     'official-elf2rpl-v1',
     'preserved-sda-fileinfo-v1'

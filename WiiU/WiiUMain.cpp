@@ -31,6 +31,10 @@
 #include "WiiU/WiiUHost.h"
 
 
+extern "C" int wiiu_sd_is_mounted(void);
+extern "C" int wiiu_fs_root_is_mounted(void);
+
+
 const char *PROGRAM_NAME = "PPSSPP";
 const char *PROGRAM_VERSION = "Wii U Autoboot";
 
@@ -480,7 +484,10 @@ static bool TryReadAutobootConfig(const char *titleIDHex, std::string *gamePath,
 	return false;
 }
 
-static bool HasInstalledPackageContent() {
+static bool HasInstalledPackageContent(bool fsAvailable) {
+	if (!fsAvailable)
+		return false;
+
 	const char *files[] = {
 		"autoboot.txt",
 		"game.iso",
@@ -501,31 +508,39 @@ static bool HasInstalledPackageContent() {
 	return false;
 }
 
-static std::string SelectWritableRoot(bool installedPackage) {
-	if (installedPackage) {
+static std::string SelectWritableRoot(bool installedPackage, bool fsAvailable, bool sdAvailable) {
+	if (installedPackage && fsAvailable) {
 		mkdir("fs:/vol/save/ppsspp", 0777);
 		if (file_exists("fs:/vol/save/ppsspp"))
 			return "fs:/vol/save/ppsspp/";
 	}
 
-	mkdir("sd:/ppsspp", 0777);
-	return "sd:/ppsspp/";
+	if (sdAvailable) {
+		mkdir("sd:/ppsspp", 0777);
+		return "sd:/ppsspp/";
+	}
+
+	return "";
 }
 
-static bool OpenAutobootDiagnosticLog(const std::string &fallbackRoot, std::ofstream *log, std::string *logPath) {
+static bool OpenAutobootDiagnosticLog(const std::string &fallbackRoot, bool sdAvailable, std::ofstream *log, std::string *logPath) {
 	if (!log || !logPath)
 		return false;
 
-	mkdir("sd:/uinjectforge", 0777);
-	mkdir("sd:/uinjectforge/ppsspp", 0777);
-	*logPath = "sd:/uinjectforge/ppsspp/autoboot.log";
-	log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
-	if (log->is_open()) {
-		log->setf(std::ios::unitbuf);
-		return true;
+	if (sdAvailable) {
+		mkdir("sd:/uinjectforge", 0777);
+		mkdir("sd:/uinjectforge/ppsspp", 0777);
+		*logPath = "sd:/uinjectforge/ppsspp/autoboot.log";
+		log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
+		if (log->is_open()) {
+			log->setf(std::ios::unitbuf);
+			return true;
+		}
+		log->clear();
 	}
 
-	log->clear();
+	if (fallbackRoot.empty())
+		return false;
 	*logPath = EnsureTrailingSlash(fallbackRoot) + "autoboot.log";
 	log->open(*logPath, std::ofstream::out | std::ofstream::trunc);
 	if (log->is_open())
@@ -675,17 +690,31 @@ int main(int argc, char **argv) {
 	tID = OSGetTitleID();
 	char titleIDHex[17];
 	bytes2hex(tID, titleIDHex);
-	const bool installedPackage = HasInstalledPackageContent();
-	const std::string writableRoot = SelectWritableRoot(installedPackage);
+	const bool sdAvailable = wiiu_sd_is_mounted() != 0;
+	const bool fsAvailable = wiiu_fs_root_is_mounted() != 0;
+	const bool standaloneTitle = (uint32_t)(tID >> 32) == 0x00050002;
+	if (standaloneTitle && !fsAvailable) {
+		OSReport("UIF PPSSPP: installed-title filesystem mount failed; launch cannot continue.\n");
+		return 1;
+	}
+
+	const bool installedPackage = HasInstalledPackageContent(fsAvailable);
+	const std::string writableRoot = SelectWritableRoot(installedPackage, fsAvailable, sdAvailable);
+	if (writableRoot.empty()) {
+		OSReport("UIF PPSSPP: no writable mounted filesystem is available.\n");
+		return 1;
+	}
 	std::string logPath;
 	std::ofstream fw;
-	OpenAutobootDiagnosticLog(writableRoot, &fw, &logPath);
+	OpenAutobootDiagnosticLog(writableRoot, sdAvailable, &fw, &logPath);
 	LogStage(fw, "main entered");
 	if (fw.is_open())
 		fw << "Title ID: " << titleIDHex << "\n"
 			<< "Installed package content detected: " << (installedPackage ? "yes" : "no") << "\n"
 			<< "Writable root: " << writableRoot << "\n"
 			<< "Diagnostic log: " << logPath << "\n"
+			<< "SD mounted: " << (sdAvailable ? "yes" : "no") << "\n"
+			<< "Installed-title filesystem mounted: " << (fsAvailable ? "yes" : "no") << "\n"
 			<< "Storage mounts are skipped for normal installable launch; using fs:/vol/content first.\n";
 	const std::string runtimeRoot = EnsureTrailingSlash(FindRuntimeRoot(titleIDHex, fw));
 	if (fw.is_open())
@@ -707,7 +736,11 @@ int main(int argc, char **argv) {
 	if (gamePath.empty())
 		gamePath = FindInstalledGamePath(titleIDHex, fw);
 
-	if (!menuOnly && !gamePath.empty() && copyToSd) {
+	if (!menuOnly && !gamePath.empty() && copyToSd && !sdAvailable) {
+		if (fw.is_open())
+			fw << "copy_to_sd requested, but the SD filesystem is unavailable; attempting direct boot path instead.\n";
+	}
+	else if (!menuOnly && !gamePath.empty() && copyToSd) {
 		const std::string sdCachePath = BuildSdCachePathForSource(gamePath);
 		if (fw.is_open())
 			fw << "copy_to_sd enabled. Copying " << gamePath << " to " << sdCachePath << "\n";

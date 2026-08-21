@@ -10,7 +10,6 @@
 #include <wiiu/os/systeminfo.h>
 #include <wiiu/sysapp.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 
 #include "fs_utils.h"
 #include "sd_fat_devoptab.h"
@@ -81,38 +80,14 @@ void MCPHookClose(void) {
 static int iosuhaxMount = 0;
 static int fsRootMount = 0;
 static int sdMount = 0;
-static FILE *entryLog = NULL;
-
-static void entry_log_open(void) {
-	if (entryLog)
-		return;
-	mkdir("sd:/uinjectforge", 0777);
-	mkdir("sd:/uinjectforge/ppsspp", 0777);
-	entryLog = fopen("sd:/uinjectforge/ppsspp/entry.log", "w");
-	if (!entryLog)
-		entryLog = fopen("fs:/vol/save/ppsspp-entry.log", "w");
-}
 
 static void entry_log_stage(const char *stage) {
 	OSReport("UIF PPSSPP entry: %s\n", stage ? stage : "(null)");
-	if (!entryLog)
-		return;
-	fprintf(entryLog, "Stage: %s\n", stage);
-	fflush(entryLog);
 }
 
 
 void entry_log_crash(const char *message) {
-	if (!entryLog)
-		return;
-	fprintf(entryLog, "Fatal exception:\n%s\n", message ? message : "(no exception text)");
-	fflush(entryLog);
-}
-static void entry_log_close(void) {
-	if (!entryLog)
-		return;
-	fclose(entryLog);
-	entryLog = NULL;
+	OSReport("UIF PPSSPP fatal exception:\n%s\n", message ? message : "(no exception text)");
 }
 
 static int is_standalone_installable(void) {
@@ -135,10 +110,7 @@ static void fsdev_init(void) {
 
 		if (res >= 0) {
 			iosuhaxMount = 1;
-			fatInitDefault();
-			sdMount = 1;
-			entry_log_open();
-			entry_log_stage("IOSUHAX storage initialized");
+			sdMount = fatInitDefault() ? 1 : 0;
 			return;
 		}
 	}
@@ -146,20 +118,18 @@ static void fsdev_init(void) {
 	sdResult = mount_sd_fat("sd");
 	if (sdResult == 0)
 		sdMount = 1;
-	entry_log_open();
-	if (entryLog) {
-		fprintf(entryLog, "SD mount result: %d\n", sdResult);
-		fflush(entryLog);
-	}
+	OSReport("UIF PPSSPP entry: SD mount result %d\n", sdResult);
 
 	fsResult = mount_wiiu_fs_root("fs");
 	if (fsResult == 0)
 		fsRootMount = 1;
-	entry_log_open();
-	if (entryLog) {
-		fprintf(entryLog, "Installed-title root mount result: %d\n", fsResult);
-		fflush(entryLog);
-	}
+	OSReport("UIF PPSSPP entry: installed-title root mount result %d\n", fsResult);
+}
+int wiiu_sd_is_mounted(void) {
+	return sdMount;
+}
+int wiiu_fs_root_is_mounted(void) {
+	return fsRootMount;
 }
 static void fsdev_exit(void) {
 	if (iosuhaxMount) {
@@ -180,7 +150,6 @@ static void fsdev_exit(void) {
 
 __attribute__((noreturn)) void __shutdown_program(void) {
 	entry_log_stage("shutdown requested");
-	entry_log_close();
 	fsdev_exit();
 	memoryRelease();
 	wiiu_log_deinit();
@@ -194,19 +163,15 @@ void __rpx_start(int argc, char **argv) {
 	socket_lib_init();
 	wiiu_log_init();
 	DEBUG_LINE();
-	fsdev_init();
-	entry_log_open();
-	entry_log_stage("storage initialized");
 	entry_log_stage("before memory initialization");
 	if (!memoryInitialize()) {
 		const char *error = memoryInitializationError();
-		if (entryLog) {
-			fprintf(entryLog, "Memory initialization failed: %s\n", error ? error : "unknown error");
-			fflush(entryLog);
-		}
+		OSReport("UIF PPSSPP entry: memory initialization failed: %s\n", error ? error : "unknown error");
 		__shutdown_program();
 	}
 	entry_log_stage("after memory initialization");
+	fsdev_init();
+	entry_log_stage("storage initialized");
 
 	DEBUG_VAR(iosuhaxMount);
 	DEBUG_VAR(fsRootMount);
