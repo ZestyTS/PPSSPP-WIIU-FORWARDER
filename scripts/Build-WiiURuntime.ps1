@@ -2,6 +2,11 @@
 param(
     [string]$BuilderImage = 'ghcr.io/wiiu-env/devkitppc:20230621',
     [string]$ConverterImage = 'devkitpro/devkitppc:latest',
+    [string]$BuildDirectoryName = 'build-wiiu-autoboot-docker-20230621',
+    [ValidateSet('TiramisuControl', 'Aroma')]
+    [string]$RuntimeVariant = 'TiramisuControl',
+    [switch]$SkipLegacyConverter,
+    [string[]]$AdditionalCapabilities = @(),
     [ValidateRange(1, 32)]
     [int]$Parallel = 4
 )
@@ -10,11 +15,15 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$buildDirectory = Join-Path $repoRoot 'build-wiiu-autoboot-docker-20230621'
+$buildDirectory = Join-Path $repoRoot $BuildDirectoryName
 $elfPath = Join-Path $buildDirectory 'PPSSPP'
 $rpxPath = Join-Path $buildDirectory 'PPSSPP.rpx'
 $legacyRpxPath = Join-Path $buildDirectory 'PPSSPP.legacy.rpx'
 $manifestPath = Join-Path $buildDirectory 'PPSSPP.runtime.json'
+$containerBuildDirectory = $BuildDirectoryName.Replace('\', '/')
+$containerElfPath = "$containerBuildDirectory/PPSSPP"
+$containerRpxPath = "$containerBuildDirectory/PPSSPP.rpx"
+$containerLegacyRpxPath = "$containerBuildDirectory/PPSSPP.legacy.rpx"
 
 if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
     throw 'Docker is required to build the Wii U runtime.'
@@ -31,7 +40,7 @@ $buildArguments = @(
     '--mount', $mount,
     '-w', '/src',
     $BuilderImage,
-    'cmake', '--build', 'build-wiiu-autoboot-docker-20230621',
+    'cmake', '--build', $containerBuildDirectory,
     '--parallel', $Parallel.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 )
 
@@ -45,28 +54,29 @@ if (-not (Test-Path -LiteralPath $elfPath -PathType Leaf)) {
 }
 
 $elf = Get-Item -LiteralPath $elfPath
-$containerElfPath = 'build-wiiu-autoboot-docker-20230621/PPSSPP'
-$legacyConvertArguments = @(
-    'run',
-    '--rm',
-    '--network', 'none',
-    '--mount', $mount,
-    '-w', '/src',
-    $ConverterImage,
-    'ext/wiiu/rpltool/rpltool',
-    $containerElfPath,
-    '-S',
-    '-o', 'build-wiiu-autoboot-docker-20230621/PPSSPP.legacy.rpx'
-)
+if (-not $SkipLegacyConverter) {
+    $legacyConvertArguments = @(
+        'run',
+        '--rm',
+        '--network', 'none',
+        '--mount', $mount,
+        '-w', '/src',
+        $ConverterImage,
+        'ext/wiiu/rpltool/rpltool',
+        $containerElfPath,
+        '-S',
+        '-o', $containerLegacyRpxPath
+    )
 
-Write-Host 'Converting PPSSPP ELF with the legacy rpltool for diagnostic A/B...'
-& docker @legacyConvertArguments
-if ($LASTEXITCODE -ne 0) {
-    throw "Legacy PPSSPP RPX conversion failed with exit code $LASTEXITCODE."
-}
-if (-not (Test-Path -LiteralPath $legacyRpxPath -PathType Leaf) -or
-    (Get-Item -LiteralPath $legacyRpxPath).Length -le 0) {
-    throw "Legacy RPX conversion completed without producing a valid file: $legacyRpxPath"
+    Write-Host 'Converting PPSSPP ELF with the legacy rpltool for diagnostic A/B...'
+    & docker @legacyConvertArguments
+    if ($LASTEXITCODE -ne 0) {
+        throw "Legacy PPSSPP RPX conversion failed with exit code $LASTEXITCODE."
+    }
+    if (-not (Test-Path -LiteralPath $legacyRpxPath -PathType Leaf) -or
+        (Get-Item -LiteralPath $legacyRpxPath).Length -le 0) {
+        throw "Legacy RPX conversion completed without producing a valid file: $legacyRpxPath"
+    }
 }
 
 $convertArguments = @(
@@ -78,7 +88,7 @@ $convertArguments = @(
     $ConverterImage,
     '/opt/devkitpro/tools/bin/elf2rpl',
     $containerElfPath,
-    'build-wiiu-autoboot-docker-20230621/PPSSPP.rpx'
+    $containerRpxPath
 )
 
 Write-Host 'Converting PPSSPP ELF with the official elf2rpl tool...'
@@ -145,7 +155,7 @@ $verifyArguments = @(
     $ConverterImage,
     '/opt/devkitpro/tools/bin/readrpl',
     '-h', '-S', '-i', '-f',
-    'build-wiiu-autoboot-docker-20230621/PPSSPP.rpx'
+    $containerRpxPath
 )
 $verification = @(& docker @verifyArguments)
 if ($LASTEXITCODE -ne 0) {
@@ -219,17 +229,33 @@ if ($LASTEXITCODE -ne 0 -or $sourceCommit -notmatch '^[a-f0-9]{40}$') {
 $sourceDirty = [bool](& git -C $repoRoot status --porcelain)
 $elfHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $elfPath).Hash
 $rpxHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $rpxPath).Hash
-$legacyRpxHash = if (Test-Path -LiteralPath $legacyRpxPath -PathType Leaf) {
-    (Get-FileHash -Algorithm SHA256 -LiteralPath $legacyRpxPath).Hash
-} else {
-    throw 'The diagnostic legacy RPX is missing.'
+$legacyRpxHash = $null
+if (-not $SkipLegacyConverter) {
+    $legacyRpxHash = if (Test-Path -LiteralPath $legacyRpxPath -PathType Leaf) {
+        (Get-FileHash -Algorithm SHA256 -LiteralPath $legacyRpxPath).Hash
+    } else {
+        throw 'The diagnostic legacy RPX is missing.'
+    }
+    if ($legacyRpxHash -eq $rpxHash) {
+        throw 'The primary and legacy RPX hashes are identical; the converter A/B is invalid.'
+    }
 }
-if ($legacyRpxHash -eq $rpxHash) {
-    throw 'The primary and legacy RPX hashes are identical; the converter A/B is invalid.'
-}
+$capabilities = @(
+    'package-content-v1',
+    'menu-probe-v1',
+    'complete-assets-v1',
+    'early-entry-log-v2',
+    'heap-failure-reporting-v1',
+    'persistent-exception-log-v1',
+    'debug-tls-free-v1',
+    'official-elf2rpl-v1',
+    'preserved-sda-fileinfo-v1'
+) + $AdditionalCapabilities | Sort-Object -Unique
 $manifest = [ordered]@{
-    schemaVersion = 2
+    schemaVersion = 3
     runtime = 'UInjectForge PPSSPP Wii U diagnostic runtime'
+    runtimeVariant = $RuntimeVariant
+    buildDirectoryName = $BuildDirectoryName
     sourceCommit = $sourceCommit
     sourceDirty = $sourceDirty
     builtAtUtc = [DateTimeOffset]::UtcNow.ToString('O')
@@ -241,17 +267,7 @@ $manifest = [ordered]@{
     legacyRpxSha256 = $legacyRpxHash
     sdaBase = "0x$($sdaBase.ToString('X8'))"
     sda2Base = "0x$($sda2Base.ToString('X8'))"
-    capabilities = @(
-        'package-content-v1',
-        'menu-probe-v1',
-        'complete-assets-v1',
-        'early-entry-log-v2',
-        'heap-failure-reporting-v1',
-        'persistent-exception-log-v1',
-        'debug-tls-free-v1',
-        'official-elf2rpl-v1',
-        'preserved-sda-fileinfo-v1'
-    )
+    capabilities = @($capabilities)
 }
 $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 
