@@ -118,3 +118,6 @@ debian/ppsspp/
 
 # bad output from libretro. don't want to accidentally add it
 nul
+
+# Local tester packages
+/publish/
