@@ -98,7 +98,11 @@ void setCurrentThreadName(const char* threadName) {
 	{}
 #else
 
-#if defined(__ANDROID__) || (defined(__GLIBC__) && defined(_GNU_SOURCE)) || defined(__wiiu__)
+#if defined(__wiiu__) && defined(WIIU_USE_SYSTEM_THREADS)
+	// Current devkitPPC provides pthread synchronization but not thread naming.
+	// PPSSPP still records the local thread name below.
+	(void)threadName;
+#elif defined(__ANDROID__) || (defined(__GLIBC__) && defined(_GNU_SOURCE)) || defined(__wiiu__)
 	pthread_setname_np(pthread_self(), threadName);
 #elif defined(__APPLE__)
 	pthread_setname_np(threadName);

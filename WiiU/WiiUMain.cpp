@@ -230,15 +230,16 @@ static void ApplyWiiUPerformanceProfile(const std::string &profile, const WiiUPe
 	g_Config.bClearFramebuffersOnFirstUseHack = true;
 
 	if (normalized == "compatibility") {
-		// Upstream's Wii U port only documented game execution through the
-		// interpreter and software renderer. Keep this path deliberately slow
-		// so it can distinguish runtime startup from the unfinished JIT/GX2 path.
+		// The Wii U port has no usable software presentation path. Keep the
+		// interpreter for a conservative CPU probe, but always present through
+		// GX2 so menu-only diagnostics exercise the same renderer as Nico's
+		// hardware-proven Tiramisu build.
 		g_Config.iCpuCore = (int)CPUCore::INTERPRETER;
 		g_Config.bFastMemory = false;
 		g_Config.bSeparateIOThread = false;
-		g_Config.bSoftwareRendering = true;
-		g_Config.bHardwareTransform = false;
-		g_Config.bSoftwareSkinning = true;
+		g_Config.bSoftwareRendering = false;
+		g_Config.bHardwareTransform = true;
+		g_Config.bSoftwareSkinning = false;
 		g_Config.bVertexCache = false;
 		g_Config.iFrameSkip = 1;
 		g_Config.bAutoFrameSkip = true;
@@ -773,18 +774,13 @@ int main(int argc, char **argv) {
 		if (fw.is_open())
 			fw << "Platform graphics initialization failed: " << error_string << "\n";
 		NativeShutdown();
-		delete host;
-		host = nullptr;
 		return 1;
 	}
 	LogStage(fw, "after platform graphics init");
 	LogStage(fw, "before native graphics init");
 	if (!NativeInitGraphics(ctx)) {
 		LogStage(fw, "native graphics init failed");
-		host->ShutdownGraphics();
 		NativeShutdown();
-		delete host;
-		host = nullptr;
 		return 1;
 	}
 	LogStage(fw, "after native graphics init");
@@ -804,13 +800,8 @@ int main(int argc, char **argv) {
 	}
 	LogStage(fw, "after emulator run loop");
 	host->ShutdownSound();
-	//unmount_fs("storage_Nand");
-	//unmount_fs("storage_usb");
 	NativeShutdownGraphics();
-	host->ShutdownGraphics();
 	NativeShutdown();
-	delete host;
-	host = nullptr;
 	LogStage(fw, "clean shutdown complete");
 
 	return 0;

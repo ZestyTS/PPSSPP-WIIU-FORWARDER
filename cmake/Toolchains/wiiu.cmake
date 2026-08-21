@@ -52,8 +52,16 @@ add_link_options(-nostartfiles -T ${WIIU_ROOT}/link.ld)
 set(CMAKE_ASM_FLAGS "${CMAKE_ASM_FLAGS} ${ARCH_FLAGS} -mregnames -Wa,--sectname-subst")
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++17 -include cstdint")
 
+if(NOT DEFINED WIIU_USE_SYSTEM_THREADS)
+   set(WIIU_USE_SYSTEM_THREADS OFF CACHE BOOL "Use the devkitPPC pthread and gthread implementation")
+endif()
+
+if(WIIU_USE_SYSTEM_THREADS)
+   add_compile_definitions(WIIU_USE_SYSTEM_THREADS=1)
+endif()
+
 if(NOT WIIU_LIBRARIES_ADDED)
-add_library(wiiu STATIC
+set(WIIU_PLATFORM_SOURCES
    ${WIIU_ROOT}/missing_libc_functions.c
    ${WIIU_ROOT}/exception_handler.c
    ${WIIU_ROOT}/entry.c
@@ -65,10 +73,15 @@ add_library(wiiu STATIC
    ${WIIU_ROOT}/gx2_validation.c
    ${WIIU_ROOT}/shader_info.c
    ${WIIU_ROOT}/stubs.S
-   ${WIIU_ROOT}/gthr-wup.cpp
    ${WIIU_ROOT}/shader_disasm.cpp
    )
-add_library(pthread STATIC ${WIIU_ROOT}/pthread.c)
+if(NOT WIIU_USE_SYSTEM_THREADS)
+   list(APPEND WIIU_PLATFORM_SOURCES ${WIIU_ROOT}/gthr-wup.cpp)
+endif()
+add_library(wiiu STATIC ${WIIU_PLATFORM_SOURCES})
+if(NOT WIIU_USE_SYSTEM_THREADS)
+   add_library(pthread STATIC ${WIIU_ROOT}/pthread.c)
+endif()
 add_library(fat STATIC
    ${WIIU_ROOT}/libfat/bit_ops.h
    ${WIIU_ROOT}/libfat/cache.c

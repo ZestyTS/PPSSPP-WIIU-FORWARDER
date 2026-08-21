@@ -94,6 +94,7 @@ static void entry_log_open(void) {
 }
 
 static void entry_log_stage(const char *stage) {
+	OSReport("UIF PPSSPP entry: %s\n", stage ? stage : "(null)");
 	if (!entryLog)
 		return;
 	fprintf(entryLog, "Stage: %s\n", stage);
