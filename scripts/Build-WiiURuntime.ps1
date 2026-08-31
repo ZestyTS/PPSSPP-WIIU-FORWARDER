@@ -55,6 +55,8 @@ $buildArguments = @(
     '--mount', $mount,
     '-w', '/src',
     $BuilderImage,
+    # The bind-mounted checkout belongs to the host user, not container root.
+    'sh', '-c', 'git config --global --add safe.directory /src && exec cmake "$@"',
     'cmake', '--build', $containerBuildDirectory,
     '--parallel', $Parallel.ToString([System.Globalization.CultureInfo]::InvariantCulture)
 )
