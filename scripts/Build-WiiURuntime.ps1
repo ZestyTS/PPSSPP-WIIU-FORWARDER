@@ -117,6 +117,19 @@ if (-not (Test-Path -LiteralPath $rpxPath -PathType Leaf)) {
     throw "RPX conversion completed without producing: $rpxPath"
 }
 
+if ([Runtime.InteropServices.RuntimeInformation]::IsOSPlatform([Runtime.InteropServices.OSPlatform]::Linux)) {
+    # Docker creates root-owned outputs; the host performs SDA patching and writes the manifest.
+    $hostUid = (& id -u).Trim()
+    $hostGid = (& id -g).Trim()
+    if ($hostUid -notmatch '^\d+$' -or $hostGid -notmatch '^\d+$') {
+        throw 'Unable to determine Linux output ownership.'
+    }
+    & docker run --rm --network none --mount $mount -w /src $ConverterImage chown "${hostUid}:${hostGid}" $containerBuildDirectory $containerRpxPath
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to return RPX output ownership to the host (exit code $LASTEXITCODE)."
+    }
+}
+
 $symbolArguments = @(
     'run',
     '--rm',
