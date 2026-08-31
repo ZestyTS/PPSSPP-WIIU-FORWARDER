@@ -33,23 +33,33 @@ bool GX2GraphicsContext::Init() {
 		{ 1920, 1080, GX2_TV_RENDER_MODE_WIDE_1080P }, /* GX2_TV_SCAN_MODE_1080I */
 		{ 1920, 1080, GX2_TV_RENDER_MODE_WIDE_1080P }  /* GX2_TV_SCAN_MODE_1080P */
 	};
-	render_mode_ = render_mode_map[GX2GetSystemTVScanMode()];
 	render_mode_ = render_mode_map[GX2_TV_SCAN_MODE_480P];
 
 	cmd_buffer_ = MEM2_alloc(0x400000, 0x40);
+	if (!cmd_buffer_)
+		return false;
 	u32 init_attributes[] = { GX2_INIT_CMD_BUF_BASE, (u32)cmd_buffer_, GX2_INIT_CMD_BUF_POOL_SIZE, 0x400000, GX2_INIT_ARGC, 0, GX2_INIT_ARGV, 0, GX2_INIT_END };
 	GX2Init(init_attributes);
+	gx2_initialized_ = true;
 	u32 size = 0;
 	u32 tmp = 0;
 	GX2CalcTVSize(render_mode_.mode, GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8, GX2_BUFFERING_MODE_DOUBLE, &size, &tmp);
 
 	tv_scan_buffer_ = MEMBucket_alloc(size, GX2_SCAN_BUFFER_ALIGNMENT);
+	if (!tv_scan_buffer_) {
+		Shutdown();
+		return false;
+	}
 	GX2Invalidate(GX2_INVALIDATE_MODE_CPU, tv_scan_buffer_, size);
 	GX2SetTVBuffer(tv_scan_buffer_, size, render_mode_.mode, GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8, GX2_BUFFERING_MODE_DOUBLE);
 
 	GX2CalcDRCSize(GX2_DRC_RENDER_MODE_SINGLE, GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8, GX2_BUFFERING_MODE_DOUBLE, &size, &tmp);
 
 	drc_scan_buffer_ = MEMBucket_alloc(size, GX2_SCAN_BUFFER_ALIGNMENT);
+	if (!drc_scan_buffer_) {
+		Shutdown();
+		return false;
+	}
 	GX2Invalidate(GX2_INVALIDATE_MODE_CPU, drc_scan_buffer_, size);
 	GX2SetDRCBuffer(drc_scan_buffer_, size, GX2_DRC_RENDER_MODE_SINGLE, GX2_SURFACE_FORMAT_UNORM_R8_G8_B8_A8, GX2_BUFFERING_MODE_DOUBLE);
 
@@ -66,6 +76,10 @@ bool GX2GraphicsContext::Init() {
 	GX2InitColorBufferRegs(&color_buffer_);
 
 	color_buffer_.surface.image = MEM1_alloc(color_buffer_.surface.imageSize, color_buffer_.surface.alignment);
+	if (!color_buffer_.surface.image) {
+		Shutdown();
+		return false;
+	}
 	GX2Invalidate(GX2_INVALIDATE_MODE_CPU, color_buffer_.surface.image, color_buffer_.surface.imageSize);
 
 	depth_buffer_.surface.dim = GX2_SURFACE_DIM_TEXTURE_2D;
@@ -81,9 +95,17 @@ bool GX2GraphicsContext::Init() {
 	GX2InitDepthBufferRegs(&depth_buffer_);
 
 	depth_buffer_.surface.image = MEM1_alloc(depth_buffer_.surface.imageSize, depth_buffer_.surface.alignment);
+	if (!depth_buffer_.surface.image) {
+		Shutdown();
+		return false;
+	}
 	GX2Invalidate(GX2_INVALIDATE_MODE_CPU, depth_buffer_.surface.image, depth_buffer_.surface.imageSize);
 
 	ctx_state_ = (GX2ContextState *)MEM2_alloc(sizeof(GX2ContextState), GX2_CONTEXT_STATE_ALIGNMENT);
+	if (!ctx_state_) {
+		Shutdown();
+		return false;
+	}
 	GX2SetupContextStateEx(ctx_state_, GX2_TRUE);
 
 	GX2SetContextState(ctx_state_);
@@ -104,39 +126,54 @@ bool GX2GraphicsContext::Init() {
 	GX2SetDRCEnable(GX2_ENABLE);
 
 	draw_ = Draw::T3DCreateGX2Context(ctx_state_, &color_buffer_, &depth_buffer_);
+	if (!draw_) {
+		Shutdown();
+		return false;
+	}
 	SetGPUBackend(GPUBackend::GX2);
 	GX2SetSwapInterval(0);
-	return draw_->CreatePresets();
+	if (!draw_->CreatePresets()) {
+		Shutdown();
+		return false;
+	}
+	return true;
 }
 
 void GX2GraphicsContext::Shutdown() {
-	if (!draw_)
-		return;
-	delete draw_;
-	draw_ = nullptr;
-	GX2ClearColor(&color_buffer_, 0.0f, 0.0f, 0.0f, 1.0f);
-	SwapBuffers();
-	GX2DrawDone();
-	GX2Shutdown();
-
-	GX2SetTVEnable(GX2_DISABLE);
-	GX2SetDRCEnable(GX2_DISABLE);
-
-	MEM2_free(ctx_state_);
+	if (draw_) {
+		delete draw_;
+		draw_ = nullptr;
+	}
+	if (gx2_initialized_) {
+		GX2DrawDone();
+		GX2SetTVEnable(GX2_DISABLE);
+		GX2SetDRCEnable(GX2_DISABLE);
+		GX2Shutdown();
+		gx2_initialized_ = false;
+	}
+	if (ctx_state_)
+		MEM2_free(ctx_state_);
 	ctx_state_ = nullptr;
-	MEM2_free(cmd_buffer_);
+	if (cmd_buffer_)
+		MEM2_free(cmd_buffer_);
 	cmd_buffer_ = nullptr;
-	MEM1_free(color_buffer_.surface.image);
+	if (color_buffer_.surface.image)
+		MEM1_free(color_buffer_.surface.image);
 	color_buffer_ = {};
-	MEM1_free(depth_buffer_.surface.image);
+	if (depth_buffer_.surface.image)
+		MEM1_free(depth_buffer_.surface.image);
 	depth_buffer_ = {};
-	MEMBucket_free(tv_scan_buffer_);
+	if (tv_scan_buffer_)
+		MEMBucket_free(tv_scan_buffer_);
 	tv_scan_buffer_ = nullptr;
-	MEMBucket_free(drc_scan_buffer_);
+	if (drc_scan_buffer_)
+		MEMBucket_free(drc_scan_buffer_);
 	drc_scan_buffer_ = nullptr;
 }
 
 void GX2GraphicsContext::SwapBuffers() {
+	if (!gx2_initialized_ || !ctx_state_ || !color_buffer_.surface.image)
+		return;
 	PROFILE_THIS_SCOPE("swap");
 	GX2DrawDone();
 	GX2CopyColorBufferToScanBuffer(&color_buffer_, GX2_SCAN_TARGET_DRC);

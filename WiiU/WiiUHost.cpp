@@ -158,8 +158,9 @@ WiiUHost::WiiUHost() {
       memcpy(&usbPath[7], "Nand", 4);
    	}*/
 
-	//chdir(usbPath);
-	chdir("sd:/ppsspp/"); // probably useless...
+	// Asset paths are registered by NativeInit(). Do not force the working
+	// directory to sd:/ppsspp here; installable packages can carry assets in
+	// their own content directory.
 }
 
 WiiUHost::~WiiUHost() {
@@ -186,6 +187,9 @@ static AXMVoice *mvoice;
 static s16 __attribute__((aligned(64))) axBuffers[2][AX_FRAMES][AX_FRAME_SIZE];
 
 static void AXCallback() {
+	if (!mvoice || mvoice->channels != 2)
+		return;
+
 	static s16 mixBuffer[AX_FRAME_SIZE * 2];
 	static int pos;
 #if 1
@@ -230,7 +234,14 @@ void WiiUHost::InitSound() {
 	mVoiceParams.count = 2;
 	AXAcquireMultiVoice(31, NULL, 0, &mVoiceParams, &mvoice);
 
-	if (mvoice && mvoice->channels == 2) {
+	if (!mvoice || mvoice->channels != 2) {
+		mvoice = nullptr;
+		AXQuit();
+		InitSoundRefCount_ = 0;
+		return;
+	}
+
+	{
 		AXVoiceOffsets offsets[2];
 		offsets[0].currentOffset = AX_FRAME_SIZE;
 		offsets[0].loopOffset = 0;
@@ -257,13 +268,17 @@ void WiiUHost::InitSound() {
 }
 
 void WiiUHost::ShutdownSound() {
+	if (InitSoundRefCount_ <= 0)
+		return;
 	if (--InitSoundRefCount_)
 		return;
 
-	AXSetMultiVoiceState(mvoice, AX_VOICE_STATE_STOPPED);
 	AXRegisterFrameCallback(NULL);
-
-	AXFreeMultiVoice(mvoice);
+	if (mvoice) {
+		AXSetMultiVoiceState(mvoice, AX_VOICE_STATE_STOPPED);
+		AXFreeMultiVoice(mvoice);
+		mvoice = nullptr;
+	}
 	AXQuit();
 }
 

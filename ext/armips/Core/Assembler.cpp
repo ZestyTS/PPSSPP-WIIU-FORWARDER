@@ -4,7 +4,9 @@
 #include "Commands/CAssemblerCommand.h"
 #include "Core/FileManager.h"
 #include "Parser/Parser.h"
+#if ARMIPS_HAS_ARM
 #include "Archs/ARM/Arm.h"
+#endif
 #include "Archs/MIPS/Mips.h"
 #include <thread>
 
@@ -19,7 +21,9 @@ bool encodeAssembly(std::unique_ptr<CAssemblerCommand> content, SymbolData& symD
 {
 	bool Revalidate;
 	
+#if ARMIPS_HAS_ARM
 	Arm.Pass2();
+#endif
 	Mips.Pass2();
 
 	int validationPasses = 0;
@@ -47,7 +51,9 @@ bool encodeAssembly(std::unique_ptr<CAssemblerCommand> content, SymbolData& symD
 
 		Revalidate = content->Validate();
 
+#if ARMIPS_HAS_ARM
 		Arm.Revalidate();
+#endif
 		Mips.Revalidate();
 
 		if (Global.memoryMode)
@@ -135,7 +141,9 @@ bool runArmips(ArmipsArguments& arguments)
 	Global.FileInfo.LineNumber = 0;
 	Global.FileInfo.FileNum = 0;
 
+#if ARMIPS_HAS_ARM
 	Arm.clear();
+#endif
 
 	// process arguments
 	Parser parser;

@@ -276,7 +276,9 @@ FIMPORT(GX2AllocateTilingApertureEx)
 FIMPORT(GX2FreeTilingAperture)
 /* proc_ui */
 FIMPORT_BEGIN(proc_ui)
+FIMPORT(ProcUIDrawDoneRelease)
 FIMPORT(ProcUIInit)
+FIMPORT(ProcUIProcessMessages)
 FIMPORT(ProcUIShutdown)
 /* sndcore2 */
 FIMPORT_BEGIN(sndcore2)

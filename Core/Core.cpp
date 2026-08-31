@@ -41,6 +41,10 @@
 #include "Core/MIPS/MIPS.h"
 #include "GPU/Debugger/Stepping.h"
 
+#if defined(__wiiu__)
+bool WiiUProcessSystemMessages();
+#endif
+
 #ifdef _WIN32
 #include "Common/CommonWindows.h"
 #include "Windows/InputDevice.h"
@@ -200,6 +204,12 @@ bool UpdateScreenScale(int width, int height) {
 
 // Note: not used on Android.
 void UpdateRunLoop() {
+#if defined(__wiiu__)
+	if (!WiiUProcessSystemMessages()) {
+		sleep_ms(16);
+		return;
+	}
+#endif
 	if (windowHidden && g_Config.bPauseWhenMinimized) {
 		sleep_ms(16);
 		return;

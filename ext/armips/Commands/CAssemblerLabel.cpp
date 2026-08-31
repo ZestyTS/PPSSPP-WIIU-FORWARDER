@@ -3,7 +3,9 @@
 #include "Core/Common.h"
 #include "Util/Util.h"
 #include "Core/FileManager.h"
+#if ARMIPS_HAS_ARM
 #include "Archs/ARM/Arm.h"
+#endif
 
 CAssemblerLabel::CAssemblerLabel(const std::wstring& name, const std::wstring& originalName)
 {
@@ -25,9 +27,11 @@ CAssemblerLabel::CAssemblerLabel(const std::wstring& name, const std::wstring& o
 	// does this need to be in validate?
 	if (label->getUpdateInfo())
 	{
+#if ARMIPS_HAS_ARM
 		if (Arch == &Arm && Arm.GetThumbMode())
 			label->setInfo(1);
 		else
+#endif
 			label->setInfo(0);
 	}
 }

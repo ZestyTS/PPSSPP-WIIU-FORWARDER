@@ -16,48 +16,121 @@
  ****************************************************************************/
 #include <malloc.h>
 #include <string.h>
-#include "memory.h"
+#include <wiiu/os/memory.h>
 #include <wiiu/mem.h>
 
 static MEMExpandedHeap* mem1_heap;
 static MEMExpandedHeap* bucket_heap;
+static BOOL mem1_frame_allocated;
+static BOOL bucket_frame_allocated;
+static const char *memory_initialization_error;
 
-void memoryInitialize(void)
+BOOL memoryInitialize(void)
 {
-   unsigned int bucket_allocatable_size;
+   MEMHeapHandle mem1_heap_handle;
    MEMHeapHandle bucket_heap_handle;
-   void *bucket_memory                = NULL;
-   MEMHeapHandle mem1_heap_handle     = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM1);
-   unsigned int mem1_allocatable_size = MEMGetAllocatableSizeForFrmHeapEx(mem1_heap_handle, 4);
-   void *mem1_memory                  = MEMAllocFromFrmHeapEx(mem1_heap_handle, mem1_allocatable_size, 4);
+   unsigned int mem1_allocatable_size;
+   unsigned int bucket_allocatable_size;
+   void *mem1_memory;
+   void *bucket_memory;
 
-   if(mem1_memory)
-      mem1_heap = MEMCreateExpHeapEx(mem1_memory,
-            mem1_allocatable_size, 0);
+   memory_initialization_error = NULL;
+   mem1_heap = NULL;
+   bucket_heap = NULL;
+   mem1_frame_allocated = FALSE;
+   bucket_frame_allocated = FALSE;
 
-   bucket_heap_handle      = MEMGetBaseHeapHandle(MEM_BASE_HEAP_FG);
+   mem1_heap_handle = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM1);
+   if (!mem1_heap_handle) {
+      memory_initialization_error = "MEM1 base heap is unavailable";
+      return FALSE;
+   }
+
+   mem1_allocatable_size = MEMGetAllocatableSizeForFrmHeapEx(mem1_heap_handle, 4);
+   if (!mem1_allocatable_size) {
+      memory_initialization_error = "MEM1 has no allocatable memory";
+      return FALSE;
+   }
+
+   mem1_memory = MEMAllocFromFrmHeapEx(mem1_heap_handle, mem1_allocatable_size, 4);
+   if (!mem1_memory) {
+      memory_initialization_error = "MEM1 frame allocation failed";
+      return FALSE;
+   }
+   mem1_frame_allocated = TRUE;
+
+   mem1_heap = MEMCreateExpHeapEx(mem1_memory, mem1_allocatable_size, 0);
+   if (!mem1_heap) {
+      memory_initialization_error = "MEM1 expanded heap creation failed";
+      memoryRelease();
+      return FALSE;
+   }
+
+   bucket_heap_handle = MEMGetBaseHeapHandle(MEM_BASE_HEAP_FG);
+   if (!bucket_heap_handle) {
+      memory_initialization_error = "foreground bucket base heap is unavailable";
+      memoryRelease();
+      return FALSE;
+   }
+
    bucket_allocatable_size = MEMGetAllocatableSizeForFrmHeapEx(bucket_heap_handle, 4);
-   bucket_memory           = MEMAllocFromFrmHeapEx(bucket_heap_handle, bucket_allocatable_size, 4);
+   if (!bucket_allocatable_size) {
+      memory_initialization_error = "foreground bucket has no allocatable memory";
+      memoryRelease();
+      return FALSE;
+   }
 
-   if(bucket_memory)
-      bucket_heap = MEMCreateExpHeapEx(bucket_memory,
-            bucket_allocatable_size, 0);
+   bucket_memory = MEMAllocFromFrmHeapEx(bucket_heap_handle, bucket_allocatable_size, 4);
+   if (!bucket_memory) {
+      memory_initialization_error = "foreground bucket frame allocation failed";
+      memoryRelease();
+      return FALSE;
+   }
+   bucket_frame_allocated = TRUE;
+
+   bucket_heap = MEMCreateExpHeapEx(bucket_memory, bucket_allocatable_size, 0);
+   if (!bucket_heap) {
+      memory_initialization_error = "foreground bucket expanded heap creation failed";
+      memoryRelease();
+      return FALSE;
+   }
+
+   return TRUE;
 }
 
 void memoryRelease(void)
 {
-    MEMDestroyExpHeap(mem1_heap);
-    MEMFreeToFrmHeap(MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM1), MEM_FRAME_HEAP_FREE_ALL);
-    mem1_heap = NULL;
+   if (mem1_heap) {
+      MEMDestroyExpHeap(mem1_heap);
+      mem1_heap = NULL;
+   }
+   if (mem1_frame_allocated) {
+      MEMHeapHandle heap = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM1);
+      if (heap)
+         MEMFreeToFrmHeap(heap, MEM_FRAME_HEAP_FREE_ALL);
+      mem1_frame_allocated = FALSE;
+   }
 
-    MEMDestroyExpHeap(bucket_heap);
-    MEMFreeToFrmHeap(MEMGetBaseHeapHandle(MEM_BASE_HEAP_FG), MEM_FRAME_HEAP_FREE_ALL);
-    bucket_heap = NULL;
+   if (bucket_heap) {
+      MEMDestroyExpHeap(bucket_heap);
+      bucket_heap = NULL;
+   }
+   if (bucket_frame_allocated) {
+      MEMHeapHandle heap = MEMGetBaseHeapHandle(MEM_BASE_HEAP_FG);
+      if (heap)
+         MEMFreeToFrmHeap(heap, MEM_FRAME_HEAP_FREE_ALL);
+      bucket_frame_allocated = FALSE;
+   }
 }
 
-u32 MEM2_avail() { return MEMGetTotalFreeSizeForExpHeap(MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM2)); }
-u32 MEM1_avail() { return MEMGetTotalFreeSizeForExpHeap(mem1_heap); }
-u32 MEMBucket_avail() { return MEMGetTotalFreeSizeForExpHeap(bucket_heap); }
+const char *memoryInitializationError(void) { return memory_initialization_error; }
+
+u32 MEM2_avail() {
+   MEMHeapHandle heap = MEMGetBaseHeapHandle(MEM_BASE_HEAP_MEM2);
+   return heap ? MEMGetTotalFreeSizeForExpHeap(heap) : 0;
+}
+u32 MEM1_avail() { return mem1_heap ? MEMGetTotalFreeSizeForExpHeap(mem1_heap) : 0; }
+u32 MEMBucket_avail() { return bucket_heap ? MEMGetTotalFreeSizeForExpHeap(bucket_heap) : 0; }
 
 void* _memalign_r(struct _reent *r, size_t alignment, size_t size)
 {
@@ -131,6 +204,8 @@ void MEM2_free(void *ptr)
 
 void * MEM1_alloc(unsigned int size, unsigned int align)
 {
+   if (!mem1_heap)
+      return NULL;
    if (align < 4)
       align = 4;
    return MEMAllocFromExpHeapEx(mem1_heap, size, align);
@@ -138,12 +213,14 @@ void * MEM1_alloc(unsigned int size, unsigned int align)
 
 void MEM1_free(void *ptr)
 {
-   if (ptr)
+   if (ptr && mem1_heap)
       MEMFreeToExpHeap(mem1_heap, ptr);
 }
 
 void * MEMBucket_alloc(unsigned int size, unsigned int align)
 {
+   if (!bucket_heap)
+      return NULL;
    if (align < 4)
       align = 4;
    return MEMAllocFromExpHeapEx(bucket_heap, size, align);
@@ -151,6 +228,6 @@ void * MEMBucket_alloc(unsigned int size, unsigned int align)
 
 void MEMBucket_free(void *ptr)
 {
-   if (ptr)
+   if (ptr && bucket_heap)
       MEMFreeToExpHeap(bucket_heap, ptr);
 }

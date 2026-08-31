@@ -30,6 +30,8 @@ extern "C" {
 
 int mount_sd_fat(const char *path);
 int unmount_sd_fat(const char *path);
+int mount_wiiu_fs_root(const char *path);
+int unmount_wiiu_fs_root(const char *path);
 
 #ifdef __cplusplus
 }

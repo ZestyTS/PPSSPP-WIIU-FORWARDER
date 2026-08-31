@@ -27,6 +27,8 @@
 #include <wiiu/gx2.h>
 #include "exception_handler.h"
 
+void entry_log_crash(const char *message);
+
 /*	Settings */
 #define NUM_STACK_TRACE_LINES 30
 #define VISIBLE_STACK_TRACE_LINES 5
@@ -104,6 +106,7 @@ static void print_and_abort()
    DEBUG_LINE();
 //   GX2ResetGPU();
    puts(exception_msgbuf);
+   entry_log_crash(exception_msgbuf);
    DEBUG_STR(OSGetThreadName(OSGetCurrentThread()));
    DEBUG_VAR(MEM2_avail());
 #if 1

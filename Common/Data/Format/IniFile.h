@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cstdint>
 #include <istream>
 #include <map>
 #include <string>

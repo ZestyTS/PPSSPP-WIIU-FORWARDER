@@ -41,7 +41,6 @@ PPSSPPDebug64.exe.manifest
 PPSSPPDebug.exe.manifest
 PPSSPPDebugARM64.exe.manifest
 PPSSPPDebugARM.exe.manifest
-assets/flash0
 UWP/icph
 UWP/Content/*
 !UWP/Content/.empty
@@ -119,3 +118,6 @@ debian/ppsspp/
 
 # bad output from libretro. don't want to accidentally add it
 nul
+
+# Local tester packages
+/publish/

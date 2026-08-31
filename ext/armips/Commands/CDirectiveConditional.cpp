@@ -1,10 +1,14 @@
 #include "stdafx.h"
 #include "Commands/CDirectiveConditional.h"
 #include "Core/Common.h"
+#if ARMIPS_HAS_ARM
 #include "Archs/ARM/Arm.h"
+#endif
 #include "Util/Util.h"
 
+#if ARMIPS_HAS_ARM
 extern CArmArchitecture Arm;
+#endif
 
 CDirectiveConditional::CDirectiveConditional(ConditionType type)
 {

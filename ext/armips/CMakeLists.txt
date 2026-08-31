@@ -24,28 +24,35 @@ endif()
 
 include_directories(.)
 
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/Archs/ARM/Arm.cpp")
+	add_definitions(-DARMIPS_HAS_ARM=1)
+	set(ARMIPS_ARM_SOURCES
+		Archs/ARM/Arm.cpp
+		Archs/ARM/Arm.h
+		Archs/ARM/ArmExpressionFunctions.cpp
+		Archs/ARM/ArmExpressionFunctions.h
+		Archs/ARM/ArmElfRelocator.cpp
+		Archs/ARM/ArmElfRelocator.h
+		Archs/ARM/ArmOpcodes.cpp
+		Archs/ARM/ArmOpcodes.h
+		Archs/ARM/ArmParser.cpp
+		Archs/ARM/ArmParser.h
+		Archs/ARM/CArmInstruction.cpp
+		Archs/ARM/CArmInstruction.h
+		Archs/ARM/CThumbInstruction.cpp
+		Archs/ARM/CThumbInstruction.h
+		Archs/ARM/Pool.cpp
+		Archs/ARM/Pool.h
+		Archs/ARM/ThumbOpcodes.cpp
+		Archs/ARM/ThumbOpcodes.h
+	)
+endif()
+
 add_library(armips STATIC
 	Archs/Architecture.h
 	Archs/Architecture.cpp
 
-	Archs/ARM/Arm.cpp
-	Archs/ARM/Arm.h
-	Archs/ARM/ArmExpressionFunctions.cpp
-	Archs/ARM/ArmExpressionFunctions.h
-	Archs/ARM/ArmElfRelocator.cpp
-	Archs/ARM/ArmElfRelocator.h
-	Archs/ARM/ArmOpcodes.cpp
-	Archs/ARM/ArmOpcodes.h
-	Archs/ARM/ArmParser.cpp
-	Archs/ARM/ArmParser.h
-	Archs/ARM/CArmInstruction.cpp
-	Archs/ARM/CArmInstruction.h
-	Archs/ARM/CThumbInstruction.cpp
-	Archs/ARM/CThumbInstruction.h
-	Archs/ARM/Pool.cpp
-	Archs/ARM/Pool.h
-	Archs/ARM/ThumbOpcodes.cpp
-	Archs/ARM/ThumbOpcodes.h
+	${ARMIPS_ARM_SOURCES}
 
 	Archs/MIPS/CMipsInstruction.cpp
 	Archs/MIPS/CMipsInstruction.h
@@ -128,35 +135,37 @@ add_library(armips STATIC
 	Util/Util.h
 )
 
-add_executable(armips-bin
-	Main/main.cpp
-	Main/Tests.cpp
-	Main/Tests.h
-	stdafx.cpp
-	stdafx.h
-)
-# workaround library and executable having same name
-set_target_properties(armips-bin PROPERTIES OUTPUT_NAME armips)
+if(NOT WIIU)
+	add_executable(armips-bin
+		Main/main.cpp
+		Main/Tests.cpp
+		Main/Tests.h
+		stdafx.cpp
+		stdafx.h
+	)
+	# workaround library and executable having same name
+	set_target_properties(armips-bin PROPERTIES OUTPUT_NAME armips)
 
-add_executable(armipstests
-	Main/main.cpp
-	Main/Tests.cpp
-	Main/Tests.h
-	stdafx.cpp
-	stdafx.h
-)
+	add_executable(armipstests
+		Main/main.cpp
+		Main/Tests.cpp
+		Main/Tests.h
+		stdafx.cpp
+		stdafx.h
+	)
 
-target_compile_definitions(armipstests PUBLIC ARMIPS_TESTS)
+	target_compile_definitions(armipstests PUBLIC ARMIPS_TESTS)
 
-target_link_libraries(armips-bin armips)
-target_link_libraries(armipstests armips)
+	target_link_libraries(armips-bin armips)
+	target_link_libraries(armipstests armips)
 
-if(WIN32)
-	target_link_libraries(armips-bin shlwapi)
-	target_link_libraries(armipstests shlwapi)
-endif(WIN32)
+	if(WIN32)
+		target_link_libraries(armips-bin shlwapi)
+		target_link_libraries(armipstests shlwapi)
+	endif(WIN32)
 
-if(MINGW)
-	target_link_libraries(armips-bin -lstdc++)
-	target_link_libraries(armipstests -lstdc++)
-endif(MINGW)
+	if(MINGW)
+		target_link_libraries(armips-bin -lstdc++)
+		target_link_libraries(armipstests -lstdc++)
+	endif(MINGW)
+endif()

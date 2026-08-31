@@ -9,7 +9,9 @@
 #include "Commands/CAssemblerLabel.h"
 #include "Commands/CommandSequence.h"
 #include "Archs/MIPS/Mips.h"
+#if ARMIPS_HAS_ARM
 #include "Archs/ARM/Arm.h"
+#endif
 #include "Core/Expression.h"
 #include "Util/Util.h"
 
@@ -409,6 +411,7 @@ std::unique_ptr<CAssemblerCommand> parseDirectiveMipsArch(Parser& parser, int fl
 	return nullptr;
 }
 
+#if ARMIPS_HAS_ARM
 std::unique_ptr<CAssemblerCommand> parseDirectiveArmArch(Parser& parser, int flags)
 {
 	Arch = &Arm;
@@ -439,6 +442,7 @@ std::unique_ptr<CAssemblerCommand> parseDirectiveArmArch(Parser& parser, int fla
 
 	return nullptr;
 }
+#endif
 
 std::unique_ptr<CAssemblerCommand> parseDirectiveArea(Parser& parser, int flags)
 {
@@ -726,11 +730,13 @@ const DirectiveMap directives = {
 	{ L".n64",				{ &parseDirectiveMipsArch,			DIRECTIVE_MIPS_N64 } },
 	{ L".rsp",				{ &parseDirectiveMipsArch,			DIRECTIVE_MIPS_RSP } },
 
+#if ARMIPS_HAS_ARM
 	{ L".gba",				{ &parseDirectiveArmArch,			DIRECTIVE_ARM_GBA } },
 	{ L".nds",				{ &parseDirectiveArmArch,			DIRECTIVE_ARM_NDS } },
 	{ L".3ds",				{ &parseDirectiveArmArch,			DIRECTIVE_ARM_3DS } },
 	{ L".arm.big",			{ &parseDirectiveArmArch,			DIRECTIVE_ARM_BIG } },
 	{ L".arm.little",		{ &parseDirectiveArmArch,			DIRECTIVE_ARM_LITTLE } },
+#endif
 	
 	{ L".area",				{ &parseDirectiveArea,				0 } },
 
