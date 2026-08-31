@@ -1,0 +1,28 @@
+name: Wii U Tiramisu runtime
+on:
+  push:
+    branches: [release/tiramisu-runtime-1]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and verify primary RPX
+        shell: pwsh
+        run: ./scripts/Build-TiramisuRuntime.ps1 -BuilderImage 'ghcr.io/wiiu-env/devkitppc:20230621@sha256:173f418076dbe51bf1b52d8ca24bde13e1ed26fc7ef7c88ee04fc24981b82238' -ConverterImage 'devkitpro/devkitppc@sha256:44cb1a920e1ec3ec7c06767493c3b85f8d643d6137cc4661f0201895ac6e4967'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PPSSPP-Tiramisu-unverified-build
+          if-no-files-found: error
+          path: |
+            build-wiiu-autoboot-docker-20230621/PPSSPP.rpx
+            build-wiiu-autoboot-docker-20230621/PPSSPP.runtime.json
+            build-wiiu-autoboot-docker-20230621/assets/
+            LICENSE.TXT
+            WIIU-RELEASE.md
+            ASSET-PROVENANCE.md
